@@ -29,6 +29,11 @@ import { DfmExtractor } from './dfm-extractor';
 import { VueExtractor } from './vue-extractor';
 import { MyBatisExtractor } from './mybatis-extractor';
 import {
+  registerExtractor,
+  resolveExtractor,
+  type StandaloneExtractor,
+} from './extractor-registry';
+import {
   getAllFrameworkResolvers,
   getApplicableFrameworks,
 } from '../resolution/frameworks';
@@ -5600,6 +5605,36 @@ export class TreeSitterExtractor {
 
 
 /**
+ * Empty result for file-level-only languages (yaml, twig, properties, …). These
+ * files are tracked at the file-record level only; any symbols/references are
+ * added later by framework resolvers (Drupal routing yml, Spring `@Value`
+ * resolution against application.yml/application.properties).
+ */
+class EmptyExtractor implements StandaloneExtractor {
+  extract(): ExtractionResult {
+    return { nodes: [], edges: [], unresolvedReferences: [], errors: [], durationMs: 0 };
+  }
+}
+
+// Custom-extractor registrations. Order mirrors the former if/else chain in
+// extractFromSource exactly (resolution is first-match-wins), so dispatch is
+// behavior-identical. Adding a new file type = one entry here + an EXTENSION_MAP
+// mapping, never a new branch. Anything matching nothing here falls through to
+// the default TreeSitterExtractor.
+registerExtractor({ name: 'svelte', match: ({ language }) => language === 'svelte', create: (f, s) => new SvelteExtractor(f, s) });
+registerExtractor({ name: 'vue', match: ({ language }) => language === 'vue', create: (f, s) => new VueExtractor(f, s) });
+registerExtractor({ name: 'astro', match: ({ language }) => language === 'astro', create: (f, s) => new AstroExtractor(f, s) });
+registerExtractor({ name: 'liquid', match: ({ language }) => language === 'liquid', create: (f, s) => new LiquidExtractor(f, s) });
+registerExtractor({ name: 'razor', match: ({ language }) => language === 'razor', create: (f, s) => new RazorExtractor(f, s) });
+// MyBatis mapper XML. Non-mapper XML returns just a file node so the watcher
+// tracks it without emitting symbols.
+registerExtractor({ name: 'mybatis-xml', match: ({ language }) => language === 'xml', create: (f, s) => new MyBatisExtractor(f, s) });
+registerExtractor({ name: 'file-level-only', match: ({ language }) => isFileLevelOnlyLanguage(language), create: () => new EmptyExtractor() });
+// Delphi/FireMonkey form files (.dfm/.fmx) — checked AFTER file-level-only to
+// preserve the original chain order.
+registerExtractor({ name: 'pascal-form', match: ({ language, fileExtension }) => language === 'pascal' && (fileExtension === '.dfm' || fileExtension === '.fmx'), create: (f, s) => new DfmExtractor(f, s) });
+
+/**
  * Extract nodes and edges from source code.
  *
  * If `frameworkNames` is provided, framework-specific extractors matching
@@ -5615,50 +5650,13 @@ export function extractFromSource(
   const detectedLanguage = language || detectLanguage(filePath, source);
   const fileExtension = path.extname(filePath).toLowerCase();
 
-  let result: ExtractionResult;
-
-  // Use custom extractor for Svelte
-  if (detectedLanguage === 'svelte') {
-    const extractor = new SvelteExtractor(filePath, source);
-    result = extractor.extract();
-  } else if (detectedLanguage === 'vue') {
-    // Use custom extractor for Vue
-    const extractor = new VueExtractor(filePath, source);
-    result = extractor.extract();
-  } else if (detectedLanguage === 'astro') {
-    // Use custom extractor for Astro (frontmatter + template delegation)
-    const extractor = new AstroExtractor(filePath, source);
-    result = extractor.extract();
-  } else if (detectedLanguage === 'liquid') {
-    // Use custom extractor for Liquid
-    const extractor = new LiquidExtractor(filePath, source);
-    result = extractor.extract();
-  } else if (detectedLanguage === 'razor') {
-    // Use custom extractor for ASP.NET Razor (.cshtml) / Blazor (.razor) markup
-    const extractor = new RazorExtractor(filePath, source);
-    result = extractor.extract();
-  } else if (detectedLanguage === 'xml') {
-    // Custom extractor for MyBatis mapper XML. Non-mapper XML returns just a
-    // file node so the watcher tracks it without emitting symbols.
-    const extractor = new MyBatisExtractor(filePath, source);
-    result = extractor.extract();
-  } else if (isFileLevelOnlyLanguage(detectedLanguage)) {
-    // No symbol extraction at this stage — files are tracked at the file-record
-    // level only. Framework extractors (Drupal routing yml, Spring `@Value`
-    // resolution against application.yml/application.properties) run later and
-    // add per-file nodes/references when they apply.
-    result = { nodes: [], edges: [], unresolvedReferences: [], errors: [], durationMs: 0 };
-  } else if (
-    detectedLanguage === 'pascal' &&
-    (fileExtension === '.dfm' || fileExtension === '.fmx')
-  ) {
-    // Use custom extractor for DFM/FMX form files
-    const extractor = new DfmExtractor(filePath, source);
-    result = extractor.extract();
-  } else {
-    const extractor = new TreeSitterExtractor(filePath, source, detectedLanguage);
-    result = extractor.extract();
-  }
+  // Dispatch to a registered custom extractor (first-match-wins), falling back
+  // to the default tree-sitter extractor when nothing matches.
+  const registration = resolveExtractor(detectedLanguage, fileExtension);
+  const extractor: StandaloneExtractor = registration
+    ? registration.create(filePath, source)
+    : new TreeSitterExtractor(filePath, source, detectedLanguage);
+  const result: ExtractionResult = extractor.extract();
 
   // Framework-specific extraction (routes, middleware, etc.)
   if (frameworkNames && frameworkNames.length > 0) {

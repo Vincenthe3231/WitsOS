@@ -11,20 +11,20 @@ Distributed as `@colbymchenry/codegraph` on npm; same binary serves as installer
 ## Build, Test, Run
 
 ```bash
-npm run build           # tsc + copy schema.sql and *.wasm into dist/; chmods dist/bin/codegraph.js
-npm run dev             # tsc --watch
-npm run clean           # rm -rf dist
+pnpm run build           # tsc + copy schema.sql and *.wasm into dist/; chmods dist/bin/codegraph.js
+pnpm run dev             # tsc --watch
+pnpm run clean           # rm -rf dist
 
-npm test                # vitest run (all)
-npm run test:watch
-npm run test:eval       # only __tests__/evaluation/
-npm run eval            # build then run __tests__/evaluation/runner.ts via tsx
+pnpm test                # vitest run (all)
+pnpm run test:watch
+pnpm run test:eval       # only __tests__/evaluation/
+pnpm run eval            # build then run __tests__/evaluation/runner.ts via tsx
 
-npm run cli             # build then run the local dist binary
+pnpm run cli             # build then run the local dist binary
 
 # Single test file / pattern
-npx vitest run __tests__/installer-targets.test.ts
-npx vitest run __tests__/extraction.test.ts -t "TypeScript"
+pnpx vitest run __tests__/installer-targets.test.ts
+pnpx vitest run __tests__/extraction.test.ts -t "TypeScript"
 ```
 
 `copy-assets` (called from `build`) copies `src/db/schema.sql` and all `src/extraction/wasm/*.wasm` files into `dist/`. **Any new SQL or grammar wasm must be copied or it won't ship.**
