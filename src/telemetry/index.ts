@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Anonymous usage telemetry — client side.
  *
  * The contract for what may be collected lives in docs/design/telemetry.md
@@ -27,8 +27,8 @@ import * as path from 'path';
 import * as os from 'os';
 import { randomUUID } from 'crypto';
 
-export const TELEMETRY_ENDPOINT = 'https://telemetry.getcodegraph.com/v1/events';
-export const TELEMETRY_DOCS = 'https://github.com/colbymchenry/codegraph/blob/main/TELEMETRY.md';
+export const TELEMETRY_ENDPOINT = 'https://telemetry.getWitsOS.com/v1/events';
+export const TELEMETRY_DOCS = 'https://github.com/colbymchenry/WitsOS/blob/main/TELEMETRY.md';
 
 // v2: dropped the `sqlite_backend` field from the `index` event — node:sqlite is
 // now the only backend (the better-sqlite3-native / wasm-fallback split is gone),
@@ -97,7 +97,7 @@ interface ConfigFile {
 export interface TelemetryStatus {
   enabled: boolean;
   /** What decided the current state — mirrors the precedence order. */
-  decidedBy: 'DO_NOT_TRACK' | 'CODEGRAPH_TELEMETRY' | 'config' | 'default';
+  decidedBy: 'DO_NOT_TRACK' | 'WitsOS_TELEMETRY' | 'config' | 'default';
   machineId: string | null;
   configPath: string;
 }
@@ -122,7 +122,7 @@ interface EventLine {
 type BufferLine = CountLine | EventLine;
 
 export interface TelemetryOptions {
-  /** Global state dir; defaults to ~/.codegraph. Tests inject a temp dir. */
+  /** Global state dir; defaults to ~/.WitsOS. Tests inject a temp dir. */
   dir?: string;
   fetchImpl?: typeof globalThis.fetch;
   now?: () => Date;
@@ -163,7 +163,7 @@ export class Telemetry {
   private intervalHandle: NodeJS.Timeout | null = null;
 
   constructor(opts: TelemetryOptions = {}) {
-    this.dir = opts.dir ?? path.join(os.homedir(), '.codegraph');
+    this.dir = opts.dir ?? path.join(os.homedir(), '.WitsOS');
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     this.now = opts.now ?? (() => new Date());
     this.env = opts.env ?? process.env;
@@ -182,7 +182,7 @@ export class Telemetry {
 
   /**
    * Resolution order (first match wins) — keep in sync with TELEMETRY.md:
-   * DO_NOT_TRACK=1 > CODEGRAPH_TELEMETRY=0|1 > stored config > default on.
+   * DO_NOT_TRACK=1 > WitsOS_TELEMETRY=0|1 > stored config > default on.
    */
   getStatus(): TelemetryStatus {
     const config = this.readConfig();
@@ -191,10 +191,10 @@ export class Telemetry {
     if (dnt !== undefined && dnt !== '' && dnt !== '0' && dnt.toLowerCase() !== 'false') {
       return { enabled: false, decidedBy: 'DO_NOT_TRACK', machineId, configPath: this.configPath };
     }
-    const forced = this.env.CODEGRAPH_TELEMETRY;
+    const forced = this.env.WitsOS_TELEMETRY;
     if (forced !== undefined && forced !== '') {
       const on = forced !== '0' && forced.toLowerCase() !== 'false';
-      return { enabled: on, decidedBy: 'CODEGRAPH_TELEMETRY', machineId, configPath: this.configPath };
+      return { enabled: on, decidedBy: 'WitsOS_TELEMETRY', machineId, configPath: this.configPath };
     }
     if (config) {
       return { enabled: config.enabled, decidedBy: 'config', machineId, configPath: this.configPath };
@@ -207,7 +207,7 @@ export class Telemetry {
   }
 
   /**
-   * Persist an explicit user choice (installer toggle or `codegraph
+   * Persist an explicit user choice (installer toggle or `WitsOS
    * telemetry on|off`). Turning telemetry off also deletes any buffered,
    * unsent data — off means off.
    */
@@ -375,8 +375,8 @@ export class Telemetry {
       this.writeConfig({ ...config, first_run_notice_shown: true, updated_at: this.now().toISOString() });
     }
     this.writeStderr(
-      `codegraph collects anonymous usage stats (no code, paths, or names) — ` +
-      `"codegraph telemetry off" or CODEGRAPH_TELEMETRY=0 disables. Details: ${TELEMETRY_DOCS}\n`,
+      `WitsOS collects anonymous usage stats (no code, paths, or names) — ` +
+      `"WitsOS telemetry off" or WitsOS_TELEMETRY=0 disables. Details: ${TELEMETRY_DOCS}\n`,
     );
   }
 
@@ -389,7 +389,7 @@ export class Telemetry {
     const lines: BufferLine[] = [...this.counts.values(), ...this.events];
     this.counts.clear();
     this.events = [];
-    // Re-check at persist time: `codegraph telemetry off` mid-process must not
+    // Re-check at persist time: `WitsOS telemetry off` mid-process must not
     // have its own invocation resurrect the queue file at exit.
     if (!this.isEnabled()) return;
     this.appendLines(lines);
@@ -486,14 +486,14 @@ export class Telemetry {
     );
     const envelope = {
       machine_id: config.machine_id,
-      codegraph_version: this.packageVersion(),
+      WitsOS_version: this.packageVersion(),
       os: process.platform,
       arch: process.arch,
       node_major: parseInt(process.versions.node.split('.')[0] ?? '0', 10),
       ci: this.env.CI !== undefined && this.env.CI !== '' && this.env.CI !== '0' && this.env.CI !== 'false',
       schema_version: SCHEMA_VERSION,
     };
-    const endpoint = this.env.CODEGRAPH_TELEMETRY_ENDPOINT || TELEMETRY_ENDPOINT;
+    const endpoint = this.env.WitsOS_TELEMETRY_ENDPOINT || TELEMETRY_ENDPOINT;
     for (let i = 0; i < events.length; i += MAX_EVENTS_PER_REQUEST) {
       const chunk = events.slice(i, i + MAX_EVENTS_PER_REQUEST);
       const body = JSON.stringify({ ...envelope, events: chunk });
@@ -531,8 +531,8 @@ export class Telemetry {
   }
 
   private debug(msg: string): void {
-    if (this.env.CODEGRAPH_TELEMETRY_DEBUG === '1') {
-      this.writeStderr(`[codegraph telemetry] ${msg}\n`);
+    if (this.env.WitsOS_TELEMETRY_DEBUG === '1') {
+      this.writeStderr(`[WitsOS telemetry] ${msg}\n`);
     }
   }
 }

@@ -1,21 +1,21 @@
-/**
- * Managed-login device flow for `codegraph login`.
+﻿/**
+ * Managed-login device flow for `WitsOS login`.
  *
- * Opens the user's browser to the CodeGraph dashboard, where they authorize with
+ * Opens the user's browser to the WitsOS dashboard, where they authorize with
  * their account; the CLI meanwhile polls for the minted, org-scoped token and
  * stores it (see ./credentials + ./config) to turn on managed reasoning.
  *
- * This talks to the DASHBOARD (app.getcodegraph.com), not the metered gateway —
+ * This talks to the DASHBOARD (app.getWitsOS.com), not the metered gateway —
  * it's a plain OAuth-style device handshake (RFC 8628 shape), nothing proprietary.
  * The resulting token is what authenticates the managed reasoning calls (./reasoner).
  */
 import { spawn } from 'child_process';
 
-const DEFAULT_BASE = 'https://app.getcodegraph.com';
+const DEFAULT_BASE = 'https://app.getWitsOS.com';
 
-/** Dashboard base for the device-login endpoints; override for testing via CODEGRAPH_LOGIN_URL. */
+/** Dashboard base for the device-login endpoints; override for testing via WitsOS_LOGIN_URL. */
 export function loginBaseUrl(): string {
-  const raw = process.env.CODEGRAPH_LOGIN_URL?.trim() || DEFAULT_BASE;
+  const raw = process.env.WitsOS_LOGIN_URL?.trim() || DEFAULT_BASE;
   return raw.replace(/\/+$/, '');
 }
 
@@ -66,11 +66,11 @@ export async function pollForToken(deviceCode: string, intervalSec: number, expi
     } else if (res.status === 429) {
       waitMs += 2000; // server asked us to slow down
     } else if (res.status === 404 || res.status === 410) {
-      throw new Error('the login request expired — run `codegraph login` again');
+      throw new Error('the login request expired — run `WitsOS login` again');
     }
     // 202 (authorization pending) → keep waiting
   }
-  throw new Error('login timed out before you approved — run `codegraph login` again');
+  throw new Error('login timed out before you approved — run `WitsOS login` again');
 }
 
 /** Best-effort: open a URL in the default browser. Never throws — the URL is also printed. */

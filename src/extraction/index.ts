@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Extraction Orchestrator
  *
  * Coordinates file scanning, parsing, and database storage.
@@ -20,7 +20,7 @@ import { QueryBuilder } from '../db/queries';
 import { extractFromSource } from './tree-sitter';
 import { detectLanguage, isSourceFile, isLanguageSupported, isFileLevelOnlyLanguage, initGrammars, loadGrammarsForLanguages } from './grammars';
 import { loadExtensionOverrides, loadIncludeIgnoredPatterns, loadExcludePatterns } from '../project-config';
-import { isCodeGraphDataDir } from '../directory';
+import { isWitsOSDataDir } from '../directory';
 import { logDebug, logWarn } from '../errors';
 import { validatePathWithinRoot, normalizePath } from '../utils';
 import ignore, { Ignore } from 'ignore';
@@ -116,7 +116,7 @@ const MAX_FILE_SIZE = 1024 * 1024;
 
 /**
  * Directory names that are dependency, build, cache, or tooling output across the
- * languages/frameworks CodeGraph supports — curated from the canonical
+ * languages/frameworks WitsOS supports — curated from the canonical
  * github/gitignore templates. Excluded by default so the graph reflects your code,
  * not third-party noise, without requiring a `.gitignore` (issue #407). The
  * exclusion applies uniformly (git or not, tracked or not); the only opt-in is an
@@ -125,7 +125,7 @@ const MAX_FILE_SIZE = 1024 * 1024;
  * `Library`) are deliberately NOT listed, to avoid ever hiding real source.
  *
  * Only dirs that actually contain *indexable source* (or are enormous) earn a slot
- * — IDE/state dirs like `.idea`/`.vs` are omitted because CodeGraph indexes only
+ * — IDE/state dirs like `.idea`/`.vs` are omitted because WitsOS indexes only
  * recognized source extensions, so they produce no symbols regardless.
  */
 const DEFAULT_IGNORE_DIRS: ReadonlySet<string> = new Set([
@@ -222,7 +222,7 @@ function readGitignorePatterns(giPath: string): string {
   // Fast path: one `.ignores()` call forces the library to compile EVERY rule,
   // so if it doesn't throw, the whole file is safe to use verbatim.
   try {
-    ignore().add(content).ignores('.codegraph-probe');
+    ignore().add(content).ignores('.WitsOS-probe');
     return content;
   } catch {
     // Fall through: a line is uncompilable — keep the good ones, drop the bad.
@@ -231,7 +231,7 @@ function readGitignorePatterns(giPath: string): string {
   let dropped = 0;
   for (const line of content.split(/\r?\n/)) {
     try {
-      ignore().add(line).ignores('.codegraph-probe');
+      ignore().add(line).ignores('.WitsOS-probe');
       kept.push(line);
     } catch {
       dropped++;
@@ -270,7 +270,7 @@ function defaultsOnlyIgnore(): Ignore {
 }
 
 /**
- * Matcher for the project's `codegraph.json` `includeIgnored` patterns — the
+ * Matcher for the project's `WitsOS.json` `includeIgnored` patterns — the
  * explicit opt-in to index embedded git repos living inside gitignored
  * directories (#622, #699). Returns `null` when the project opted in nothing,
  * which is the zero-config DEFAULT: `.gitignore` is then fully respected and a
@@ -284,7 +284,7 @@ function loadIncludeIgnoredMatcher(rootDir: string): Ignore | null {
 }
 
 /**
- * Matcher for the project's `codegraph.json` `exclude` patterns — paths to keep
+ * Matcher for the project's `WitsOS.json` `exclude` patterns — paths to keep
  * OUT of the index even when git-tracked, which `.gitignore` cannot do (#999).
  * The escape hatch for a committed vendor/theme/SDK directory. Returns `null`
  * when nothing is excluded (the zero-config default → no overhead). Matched
@@ -344,7 +344,7 @@ const EMBEDDED_REPO_SEARCH_ENTRIES = 2000;
  *   super-repo merely hides from git; index it (#193, #514).
  * - A `.git` **file** is a pointer (`gitdir: …`). A git **worktree** points into
  *   the host repo's own `.git/worktrees/<name>`, so it is a second working view
- *   of a repo CodeGraph already indexes — indexing it just duplicates the whole
+ *   of a repo WitsOS already indexes — indexing it just duplicates the whole
  *   graph N times; skip it (#848). A **submodule worktree** points into
  *   `.git/modules/<module>/worktrees/<name>` — same duplication, so skip it too
  *   (#945). A **submodule** checkout points into `.git/modules/<module>` (no
@@ -379,7 +379,7 @@ function classifyGitDir(absDir: string): 'embedded' | 'worktree' | 'none' {
  * Find git repositories nested under `absDir` (inclusive), shallow bounded BFS.
  * Stops descending at each repo root found — contents belong to that repo's own
  * enumeration. Skips default-ignored dirs (`node_modules` can contain `.git`
- * from npm git-dependencies — that never makes it project code) and CodeGraph
+ * from npm git-dependencies — that never makes it project code) and WitsOS
  * data dirs. Depth- and entry-capped so a huge ignored tree can't stall the scan.
  */
 function findNestedGitRepos(absDir: string, relPrefix: string): string[] {
@@ -412,7 +412,7 @@ function findNestedGitRepos(absDir: string, relPrefix: string): string[] {
     }
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      if (entry.name === '.git' || isCodeGraphDataDir(entry.name)) continue;
+      if (entry.name === '.git' || isWitsOSDataDir(entry.name)) continue;
       const childRel = rel + entry.name + '/';
       if (defaults.ignores(childRel)) continue;
       queue.push({ abs: path.join(abs, entry.name), rel: childRel, depth: depth + 1 });
@@ -439,7 +439,7 @@ export class ScopeIgnore {
     private rootMatcher: Ignore,
     embedded: Array<{ root: string; matcher: Ignore }>,
     /**
-     * Project `codegraph.json` `exclude` patterns (#999), matched against the
+     * Project `WitsOS.json` `exclude` patterns (#999), matched against the
      * full root-relative path. Wins over everything else — an explicit user
      * exclude applies even to tracked files and even inside embedded repos.
      */
@@ -489,7 +489,7 @@ export function buildScopeIgnore(rootDir: string, embeddedRoots?: Iterable<strin
 /**
  * Standalone discovery of every embedded repo root under `rootDir` (relative,
  * trailing-slashed) — the untracked kind (#193) always, and the gitignored kind
- * (#514) only for directories the project opted in via `codegraph.json`
+ * (#514) only for directories the project opted in via `WitsOS.json`
  * `includeIgnored` (#622, #699); otherwise `.gitignore` is respected and they
  * are not discovered (#970, #976). Recursive (an embedded repo can embed further
  * repos). Returns [] for non-git roots: the filesystem walk handles nested repos
@@ -535,9 +535,9 @@ export function discoverEmbeddedRepoRoots(rootDir: string): string[] {
  * relative to `repoDir`, trailing-slashed.
  *
  * OPT-IN ONLY. Walking into a gitignored directory contradicts what every other
- * tool (and CodeGraph's own `git ls-files` foundation) does — `.gitignore`
+ * tool (and WitsOS's own `git ls-files` foundation) does — `.gitignore`
  * excludes. So this returns `[]` unless the project opted the directory in via
- * `codegraph.json` `includeIgnored`; without that, a gitignored dir — including
+ * `WitsOS.json` `includeIgnored`; without that, a gitignored dir — including
  * a huge reference/data dir full of nested clones — is left untouched (#970,
  * #976). When opted in, it restores the super-repo-of-clones behavior (#622,
  * #699). `prefix` is the scan-root-relative path of `repoDir`, so a pattern like
@@ -569,7 +569,7 @@ function findIgnoredEmbeddedRepos(repoDir: string, includeIgnored: Ignore | null
  * embedded repo is its own git boundary, so we re-run `git ls-files` inside it.
  * (See issue #193.) GITIGNORED embedded repos are invisible even to that; they
  * are discovered separately via `findIgnoredEmbeddedRepos` (#514) but ONLY for
- * directories the project opted in through `codegraph.json` `includeIgnored`
+ * directories the project opted in through `WitsOS.json` `includeIgnored`
  * (`includeIgnored` here, threaded from the scan root) — by default `.gitignore`
  * is respected and they stay out (#970, #976). Every embedded repo root (however
  * found) is recorded in `embeddedRoots` so callers can exempt its files from the
@@ -619,7 +619,7 @@ function collectGitFiles(repoDir: string, prefix: string, files: Set<string>, em
   // Embedded repos hidden by THIS repo's ignore rules (`/packages/` in a
   // super-repo .gitignore) never appear in any listing above. By default they
   // stay hidden — `.gitignore` is respected (#970, #976). They are recursed into
-  // only when the project opted the directory in via `codegraph.json`
+  // only when the project opted the directory in via `WitsOS.json`
   // `includeIgnored` (#622, #699), which `findIgnoredEmbeddedRepos` enforces.
   for (const rel of findIgnoredEmbeddedRepos(repoDir, includeIgnored, prefix)) {
     embeddedRoots?.add(normalizePath(prefix + rel));
@@ -693,17 +693,17 @@ interface GitChanges {
  * Recurses into embedded repos — the untracked kind (#193: the parent's status
  * collapses them to an opaque `?? subdir/` entry) always, and the gitignored
  * kind (#514: they never appear in the parent's status at all) only for
- * directories opted in via `codegraph.json` `includeIgnored` (#622, #699) —
+ * directories opted in via `WitsOS.json` `includeIgnored` (#622, #699) —
  * running `git status` inside each, so changes in a multi-repo workspace sync
  * without a full rescan. By default a gitignored dir is left alone, matching the
  * full-index scan (#970, #976). Deleting an ENTIRE embedded repo dir is the one
  * case this cannot see (the child status that would report the deletions is gone
- * with it); a full `codegraph index` reconciles that.
+ * with it); a full `WitsOS index` reconciles that.
  */
 function getGitChangedFiles(rootDir: string): GitChanges | null {
   try {
     const changes: GitChanges = { modified: [], added: [], deleted: [] };
-    // Custom extension → language overrides from the project's codegraph.json,
+    // Custom extension → language overrides from the project's WitsOS.json,
     // so change detection sees the same custom-extension files the full index does.
     const overrides = loadExtensionOverrides(rootDir);
     collectGitStatus(rootDir, '', changes, overrides, loadIncludeIgnoredMatcher(rootDir), loadExcludeMatcher(rootDir));
@@ -725,7 +725,7 @@ function collectGitStatus(repoDir: string, prefix: string, out: GitChanges, over
   // status hides neither: it ignores nothing for *tracked* paths, and the
   // built-in defaults aren't gitignore at all. Without this filter a committed
   // vendor/ dir, or a tracked file under a .gitignored dir, surfaces here as a
-  // change — so `codegraph status` (which reads getChangedFiles) reports a
+  // change — so `WitsOS status` (which reads getChangedFiles) reports a
   // pending edit the full index never tracks and `sync` never clears. Matching
   // repo-relative `rel` at each recursion level mirrors getGitVisibleFiles'
   // ScopeIgnore: every embedded repo is judged by ITS OWN rules, never the
@@ -760,7 +760,7 @@ function collectGitStatus(repoDir: string, prefix: string, out: GitChanges, over
     // Added (`??`) / modified files inside an excluded dir must not enter the
     // index — match against the repo-relative path, same as the full scan. (#766)
     if (ig.ignores(rel)) continue;
-    // User `codegraph.json` `exclude` (#999) is project-root-relative, so it's
+    // User `WitsOS.json` `exclude` (#999) is project-root-relative, so it's
     // matched against the full path — sync must not re-add a tracked file the
     // full index now keeps out. Deletions above stay unfiltered so a file that
     // WAS indexed before an exclude was added still cleans itself out.
@@ -799,7 +799,7 @@ export function scanDirectory(
   rootDir: string,
   onProgress?: (current: number, file: string) => void
 ): string[] {
-  // Custom extension → language overrides from the project's codegraph.json.
+  // Custom extension → language overrides from the project's WitsOS.json.
   const overrides = loadExtensionOverrides(rootDir);
 
   // Fast path: use git to get all visible files (respects .gitignore everywhere)
@@ -829,7 +829,7 @@ export async function scanDirectoryAsync(
   rootDir: string,
   onProgress?: (current: number, file: string) => void
 ): Promise<string[]> {
-  // Custom extension → language overrides from the project's codegraph.json.
+  // Custom extension → language overrides from the project's WitsOS.json.
   const overrides = loadExtensionOverrides(rootDir);
 
   const gitFiles = getGitVisibleFiles(rootDir);
@@ -863,7 +863,7 @@ function scanDirectoryWalk(
   const files: string[] = [];
   let count = 0;
   const visitedDirs = new Set<string>();
-  // Custom extension → language overrides from the project's codegraph.json.
+  // Custom extension → language overrides from the project's WitsOS.json.
   const overrides = loadExtensionOverrides(rootDir);
 
   // A .gitignore matcher scoped to the directory that declared it. Patterns in
@@ -925,9 +925,9 @@ function scanDirectoryWalk(
     }
 
     for (const entry of entries) {
-      // Never descend into git internals or any CodeGraph data directory
+      // Never descend into git internals or any WitsOS data directory
       // (the active one or a sibling another environment created — #636).
-      if (entry.name === '.git' || isCodeGraphDataDir(entry.name)) continue;
+      if (entry.name === '.git' || isWitsOSDataDir(entry.name)) continue;
 
       const fullPath = path.join(dir, entry.name);
       const relativePath = normalizePath(path.relative(rootDir, fullPath));
@@ -970,7 +970,7 @@ function scanDirectoryWalk(
   // Seed a base matcher with the built-in default ignores (merged with the root
   // .gitignore so a negation can override). Nested .gitignores still layer per-dir.
   const baseMatchers: ScopedIgnore[] = [{ dir: rootDir, ig: buildDefaultIgnore(rootDir) }];
-  // Project `codegraph.json` `exclude` patterns (#999), rooted at the project so
+  // Project `WitsOS.json` `exclude` patterns (#999), rooted at the project so
   // `isIgnored` matches them against root-relative paths — same coverage the
   // git path gets via ScopeIgnore, for non-git projects.
   const exclude = loadExcludeMatcher(rootDir);
@@ -1084,7 +1084,7 @@ export class ExtractionOrchestrator {
     let totalNodes = 0;
     let totalEdges = 0;
 
-    // Custom extension → language overrides from the project's codegraph.json.
+    // Custom extension → language overrides from the project's WitsOS.json.
     // Threaded into language detection so custom-extension files load the right
     // grammar and store under the mapped language.
     const overrides = loadExtensionOverrides(this.rootDir);
@@ -1257,7 +1257,7 @@ export class ExtractionOrchestrator {
 
     async function requestParse(filePath: string, content: string): Promise<ExtractionResult> {
       // Resolve the language on the main thread (where the project's
-      // codegraph.json overrides are loaded) and hand it to the worker, so the
+      // WitsOS.json overrides are loaded) and hand it to the worker, so the
       // worker never needs the override map itself.
       const language = detectLanguage(filePath, content, overrides);
 
@@ -1711,7 +1711,7 @@ export class ExtractionOrchestrator {
       };
     }
 
-    // Detect language (honoring the project's codegraph.json extension overrides)
+    // Detect language (honoring the project's WitsOS.json extension overrides)
     const language = detectLanguage(relativePath, content, loadExtensionOverrides(this.rootDir));
     if (!isLanguageSupported(language)) {
       return {
@@ -1854,6 +1854,13 @@ export class ExtractionOrchestrator {
       errors: result.errors.length > 0 ? result.errors : undefined,
     };
     this.queries.upsertFile(fileRecord);
+
+    // Insert prose chunks (document/knowledge indexing — Phase 2+).
+    // chunks.file_path has ON DELETE CASCADE so deleting the file record above
+    // already wiped any old chunks; just insert the new batch.
+    if (result.chunks && result.chunks.length > 0) {
+      this.queries.insertChunks(result.chunks);
+    }
   }
 
   /**

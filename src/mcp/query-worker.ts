@@ -1,8 +1,8 @@
-/**
+﻿/**
  * Query worker thread — issue: concurrent MCP tool calls starve the daemon.
  *
  * The shared daemon serves every session on ONE event loop with synchronous
- * `node:sqlite`. `codegraph_explore` is CPU-heavy (FTS + RWR/personalized-
+ * `node:sqlite`. `WitsOS_explore` is CPU-heavy (FTS + RWR/personalized-
  * PageRank + impact + output building) stitched together by microtask `await`s,
  * so N concurrent explores keep the microtask queue continuously full and
  * starve the macrotask phases — timers AND socket I/O. The transport freezes:
@@ -17,7 +17,7 @@
  * transport. The worker runs {@link ToolHandler.executeReadTool} — validation +
  * dispatch + error classification — and returns the raw {@link ToolResult}; the
  * MAIN thread keeps the catch-up gate, the watcher-state notices (staleness /
- * worktree), `codegraph_status`, and telemetry, none of which a watcher-less
+ * worktree), `WitsOS_status`, and telemetry, none of which a watcher-less
  * read connection can answer.
  */
 
@@ -35,9 +35,9 @@ interface CallMessage {
   args: Record<string, unknown>;
 }
 
-// Mirror the engine's lazy-require of the heavy CodeGraph + tools chain. This
+// Mirror the engine's lazy-require of the heavy WitsOS + tools chain. This
 // module is only ever loaded as a Worker, so the require runs once on spawn.
-const loadCodeGraph = (): typeof import('../index').default =>
+const loadWitsOS = (): typeof import('../index').default =>
   (require('../index') as typeof import('../index')).default;
 const loadToolHandler = (): typeof import('./tools').ToolHandler =>
   (require('./tools') as typeof import('./tools')).ToolHandler;
@@ -53,7 +53,7 @@ if (parentPort) {
   let handler: InstanceType<typeof import('./tools').ToolHandler> | null = null;
   let initError: string | null = null;
   try {
-    const cg = loadCodeGraph().openSync(root);
+    const cg = loadWitsOS().openSync(root);
     handler = new (loadToolHandler())(cg);
   } catch (err) {
     initError = err instanceof Error ? err.message : String(err);
@@ -72,14 +72,14 @@ if (parentPort) {
     // Test-only crash hook so the pool's worker-recovery path is exercisable
     // deterministically. Gated behind an env flag only the suite sets — inert in
     // normal operation (and `__test_crash__` isn't a real tool name anyway).
-    if (msg.toolName === '__test_crash__' && process.env.CODEGRAPH_QUERY_WORKER_ALLOW_TEST_CRASH === '1') {
+    if (msg.toolName === '__test_crash__' && process.env.WitsOS_QUERY_WORKER_ALLOW_TEST_CRASH === '1') {
       process.exit(13);
     }
     if (!handler) {
       port.postMessage({
         type: 'result',
         id: msg.id,
-        result: errorResult(`codegraph worker could not open the project: ${initError}`),
+        result: errorResult(`WitsOS worker could not open the project: ${initError}`),
       });
       return;
     }

@@ -4,28 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CodeGraph is a local-first code intelligence library + CLI + MCP server. It parses any supported codebase with tree-sitter, stores symbols/edges/files in SQLite (FTS5), and exposes a knowledge graph to AI agents (Claude Code, Cursor, Codex CLI, opencode) over MCP. Per-project data lives in `.codegraph/`. Extraction is deterministic — derived from AST, not LLM-summarized.
+WitsOS is a local-first code intelligence library + CLI + MCP server (forked from CodeGraph). It parses any supported codebase with tree-sitter, stores symbols/edges/files in SQLite (FTS5), and exposes a knowledge graph to AI agents (Claude Code, Cursor, Codex CLI, opencode) over MCP. Per-project data lives in `.witsos/`. Extraction is deterministic — derived from AST, not LLM-summarized.
 
-Distributed as `@colbymchenry/codegraph` on npm; same binary serves as installer, indexer, and MCP server.
+The binary is `witsos` (not `codegraph`) — installed globally via `pnpm link . --global` from this repo. Per-project index DB is `witsos.db` (not `codegraph.db`). The `CODEGRAPH_DIR` env override is replaced by `WitsOS_DIR`.
 
 ## Build, Test, Run
 
 ```bash
-pnpm run build           # tsc + copy schema.sql and *.wasm into dist/; chmods dist/bin/codegraph.js
-pnpm run dev             # tsc --watch
-pnpm run clean           # rm -rf dist
+# Build (CI=true bypasses pnpm 11's interactive deps-status check)
+CI=true pnpm run build:fast   # tsc + copy schema.sql and *.wasm into dist/
+CI=true pnpm run build        # same + chmod bin (full)
+pnpm run dev                  # tsc --watch
+pnpm run clean                # rm -rf dist
+
+# Relink globally after build
+CI=true pnpm link . --global
 
 pnpm test                # vitest run (all)
 pnpm run test:watch
 pnpm run test:eval       # only __tests__/evaluation/
 pnpm run eval            # build then run __tests__/evaluation/runner.ts via tsx
 
-pnpm run cli             # build then run the local dist binary
-
 # Single test file / pattern
 pnpx vitest run __tests__/installer-targets.test.ts
 pnpx vitest run __tests__/extraction.test.ts -t "TypeScript"
 ```
+
+### Key CLI commands (binary: `witsos`)
+
+```bash
+witsos init [path]       # initialize + one-shot index
+witsos index [path]      # re-index from scratch
+witsos sync [path]       # sync changed files only
+witsos watch [path]      # standalone file watcher — auto-syncs on change, Ctrl-C to stop
+witsos status [path]     # show index stats
+witsos serve --mcp       # MCP daemon (started by AI agents; also auto-syncs when connected)
+```
+
+`witsos watch` is the recommended way to keep the index live without an AI agent connected.
 
 `copy-assets` (called from `build`) copies `src/db/schema.sql` and all `src/extraction/wasm/*.wasm` files into `dist/`. **Any new SQL or grammar wasm must be copied or it won't ship.**
 

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GoFrame route → controller-method dispatch synthesis (#747).
  *
  * GoFrame binds routes reflectively (`group.Bind(user.NewV1())`), so the route
@@ -18,7 +18,7 @@
  * Go method nodes already carry that signature, so no source re-read is needed.
  * Each synthesized edge is `kind:'calls'`, `provenance:'heuristic'`,
  * `metadata.synthesizedBy:'goframe-route'` — a reflective-dispatch bridge, so
- * `codegraph_explore` surfaces it as a dynamic hop rather than a literal call,
+ * `WitsOS_explore` surfaces it as a dynamic hop rather than a literal call,
  * and the handler's callers list the route that reaches it. A project with no
  * GoFrame routes is a no-op.
  */

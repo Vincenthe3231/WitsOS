@@ -1,9 +1,9 @@
-/**
- * Project-scoped configuration: a committed `codegraph.json` at the project
+﻿/**
+ * Project-scoped configuration: a committed `WitsOS.json` at the project
  * root that a team shares through version control.
  *
  * Today it carries one thing — `extensions`, an opt-in map from a custom file
- * extension to one of CodeGraph's supported languages. The built-in
+ * extension to one of WitsOS's supported languages. The built-in
  * extension → language table (`EXTENSION_MAP` in `extraction/grammars.ts`) is
  * otherwise hardcoded, so a codebase that uses a non-standard extension for a
  * supported language (e.g. `.dota_lua` for Lua) sees those files silently
@@ -29,7 +29,7 @@ import { isLanguageSupported } from './extraction/grammars';
 import { logWarn } from './errors';
 
 /** Filename of the project-scoped config, resolved relative to the project root. */
-export const PROJECT_CONFIG_FILENAME = 'codegraph.json';
+export const PROJECT_CONFIG_FILENAME = 'WitsOS.json';
 
 export interface ProjectConfig {
   /** Map of custom file extension (`.foo`) to a supported language id. */
@@ -55,7 +55,7 @@ export interface ProjectConfig {
   exclude?: string[];
 }
 
-/** Parsed, validated view of a project's `codegraph.json`. */
+/** Parsed, validated view of a project's `WitsOS.json`. */
 interface ParsedConfig {
   extensions: Record<string, Language>;
   includeIgnored: string[];
@@ -70,7 +70,7 @@ interface CacheEntry {
 /**
  * Cache keyed by project root. The loader is called once per indexing/scan/sync
  * operation (and per watch event), so the mtime guard keeps repeat calls to one
- * `stat` while a single `codegraph.json` is in force. Keying by root keeps two
+ * `stat` while a single `WitsOS.json` is in force. Keying by root keeps two
  * projects in the same process (the daemon / multi-project MCP server) isolated.
  */
 const cache = new Map<string, CacheEntry>();
@@ -104,7 +104,7 @@ function normalizeExtKey(raw: string): string | null {
 }
 
 /**
- * Read + JSON-parse a `codegraph.json` once and return its validated view.
+ * Read + JSON-parse a `WitsOS.json` once and return its validated view.
  * Every failure mode degrades to the zero-config default — a missing file, bad
  * JSON, or a typo'd value never throws.
  */
@@ -215,7 +215,7 @@ function extractExclude(parsed: object, file: string): string[] {
 }
 
 /**
- * Load the parsed `codegraph.json` for a project, mtime-cached. A missing or
+ * Load the parsed `WitsOS.json` for a project, mtime-cached. A missing or
  * malformed file yields the zero-config default. One `stat` (and at most one
  * read/parse) while a single config file is in force, shared across every field.
  */
@@ -245,7 +245,7 @@ function loadParsedConfig(rootDir: string): ParsedConfig {
  * Returns a map of `.ext` → supported language id. The result merges on top of
  * the built-in extension map at the point of use (see `detectLanguage` /
  * `isSourceFile`), with these user mappings taking precedence. Returns an empty
- * map when there is no `codegraph.json` (the zero-config default).
+ * map when there is no `WitsOS.json` (the zero-config default).
  */
 export function loadExtensionOverrides(rootDir: string): Record<string, Language> {
   return loadParsedConfig(rootDir).extensions;

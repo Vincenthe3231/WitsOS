@@ -9,7 +9,7 @@ import { SqliteDatabase } from './sqlite-adapter';
 /**
  * Current schema version
  */
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 6;
 
 /**
  * Migration definition
@@ -72,6 +72,55 @@ const migrations: Migration[] = [
     up: (db) => {
       db.exec(`
         ALTER TABLE nodes ADD COLUMN return_type TEXT;
+      `);
+    },
+  },
+  {
+    version: 6,
+    description: 'Add chunks table + chunks_fts for document/prose indexing (universal knowledge engine)',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS chunks (
+          id TEXT PRIMARY KEY,
+          file_path TEXT NOT NULL,
+          node_id TEXT,
+          chunk_index INTEGER NOT NULL,
+          char_start INTEGER NOT NULL,
+          char_end INTEGER NOT NULL,
+          body TEXT NOT NULL,
+          metadata TEXT,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (file_path) REFERENCES files(path) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_chunks_file_path ON chunks(file_path);
+        CREATE INDEX IF NOT EXISTS idx_chunks_node_id ON chunks(node_id);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+          id,
+          file_path,
+          body,
+          metadata,
+          content='chunks',
+          content_rowid='rowid'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+          INSERT INTO chunks_fts(rowid, id, file_path, body, metadata)
+          VALUES (NEW.rowid, NEW.id, NEW.file_path, NEW.body, NEW.metadata);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+          INSERT INTO chunks_fts(chunks_fts, rowid, id, file_path, body, metadata)
+          VALUES ('delete', OLD.rowid, OLD.id, OLD.file_path, OLD.body, OLD.metadata);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+          INSERT INTO chunks_fts(chunks_fts, rowid, id, file_path, body, metadata)
+          VALUES ('delete', OLD.rowid, OLD.id, OLD.file_path, OLD.body, OLD.metadata);
+          INSERT INTO chunks_fts(rowid, id, file_path, body, metadata)
+          VALUES (NEW.rowid, NEW.id, NEW.file_path, NEW.body, NEW.metadata);
+        END;
       `);
     },
   },

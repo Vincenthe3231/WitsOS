@@ -1,11 +1,11 @@
-/**
- * Managed-offload credentials: the CodeGraph org token that authenticates the
- * managed reasoning tier against `codegraph-ai` (the metered gateway).
+﻿/**
+ * Managed-offload credentials: the WitsOS org token that authenticates the
+ * managed reasoning tier against `WitsOS-ai` (the metered gateway).
  *
  * Unlike a BYO provider key (which is never persisted — the config stores only the
  * NAME of an env var), the org token IS a revocable, org-scoped auth token issued
  * to this machine — like the token `gh auth` or `npm login` stores. So it lives in
- * its own file, `~/.codegraph/credentials.json`, written `0600`, kept out of the
+ * its own file, `~/.WitsOS/credentials.json`, written `0600`, kept out of the
  * shareable `config.json`.
  */
 import * as fs from 'fs';
@@ -13,7 +13,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 function credentialsPath(): string {
-  return path.join(os.homedir(), '.codegraph', 'credentials.json');
+  return path.join(os.homedir(), '.WitsOS', 'credentials.json');
 }
 
 function read(): Record<string, unknown> {

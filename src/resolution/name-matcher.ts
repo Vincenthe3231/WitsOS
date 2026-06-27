@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Name Matcher
  *
  * Handles symbol name matching for reference resolution.
@@ -23,11 +23,11 @@ import { UnresolvedRef, ResolvedRef, ResolutionContext } from './types';
  * resolution all still run and resolve a ubiquitous name when the context names
  * its exact target. Real repos top out near ~40 same-named methods, so a normal
  * codebase never reaches this; only bulk-vendored code does. Tune via
- * `CODEGRAPH_AMBIGUOUS_NAME_CEILING`.
+ * `WitsOS_AMBIGUOUS_NAME_CEILING`.
  */
 const DEFAULT_AMBIGUOUS_NAME_CEILING = 500;
 function resolveAmbiguousNameCeiling(): number {
-  const raw = process.env.CODEGRAPH_AMBIGUOUS_NAME_CEILING;
+  const raw = process.env.WitsOS_AMBIGUOUS_NAME_CEILING;
   if (!raw) return DEFAULT_AMBIGUOUS_NAME_CEILING;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_AMBIGUOUS_NAME_CEILING;

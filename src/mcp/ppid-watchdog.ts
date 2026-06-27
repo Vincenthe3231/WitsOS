@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Shared decision logic for the PPID watchdog (#277, #692).
  *
  * The watchdog's job: notice that the process we depend on — our parent, or the
@@ -27,7 +27,7 @@ export interface SupervisionState {
   currentPpid: number;
   /**
    * The MCP host pid threaded past an intermediate launcher
-   * (`CODEGRAPH_HOST_PPID`), or null when unknown — e.g. the standalone bundle,
+   * (`WitsOS_HOST_PPID`), or null when unknown — e.g. the standalone bundle,
    * which pre-bakes `--liftoff-only` and so never runs the relaunch that sets it.
    */
   hostPpid: number | null;
@@ -67,7 +67,7 @@ export const DEFAULT_PPID_POLL_MS = 5000;
 
 /**
  * Resolve the PPID watchdog poll interval from an env override
- * (`CODEGRAPH_PPID_POLL_MS`). A value of `0` disables the watchdog entirely
+ * (`WitsOS_PPID_POLL_MS`). A value of `0` disables the watchdog entirely
  * (escape hatch for embedded scenarios where the parent legitimately re-parents
  * the process on purpose). Anything non-numeric or negative falls back to the
  * default.
@@ -82,7 +82,7 @@ export function parsePpidPollMs(raw: string | undefined): number {
 
 /**
  * Parse the host PID propagated across the `--liftoff-only` re-exec
- * (`CODEGRAPH_HOST_PPID`). Returns a positive integer PID, or null when
+ * (`WitsOS_HOST_PPID`). Returns a positive integer PID, or null when
  * unset/invalid — the direct-launch path, where the watchdog falls back to
  * `process.ppid` divergence. PIDs of 0/1 are rejected (0 = unknown, 1 = init,
  * i.e. already orphaned), so the watchdog doesn't latch onto init.

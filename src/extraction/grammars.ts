@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Grammar Loading and Caching
  *
  * Uses web-tree-sitter (WASM) for universal cross-platform support.
@@ -10,7 +10,7 @@ import * as path from 'path';
 import { Parser, Language as WasmLanguage } from 'web-tree-sitter';
 import { Language } from '../types';
 
-export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'unknown'>;
+export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'plaintext' | 'markdown' | 'csv' | 'unknown'>;
 
 /**
  * WASM filename map — maps each language to its .wasm grammar file
@@ -115,15 +115,23 @@ export const EXTENSION_MAP: Record<string, Language> = {
   // shape as the `.yml` variants — the YAML/properties extractor emits one node
   // per leaf key, and the Spring resolver links `@Value("${k}")` references.
   '.properties': 'properties',
+  // Document types (universal knowledge indexing — Phase 2+).
+  '.txt': 'plaintext',
+  '.text': 'plaintext',
+  '.md': 'markdown',
+  '.mdx': 'markdown',
+  '.markdown': 'markdown',
+  '.csv': 'csv',
+  '.tsv': 'csv',
 };
 
 /**
- * Whether a file is one CodeGraph can parse, based purely on its extension.
+ * Whether a file is one WitsOS can parse, based purely on its extension.
  * This is the single source of truth for "should we index this file" — derived
  * from EXTENSION_MAP so parser support and indexing selection never drift.
  *
  * `overrides` is the project's validated custom extension → language map (from
- * `codegraph.json`); when present its extensions count as indexable in addition
+ * `WitsOS.json`); when present its extensions count as indexable in addition
  * to the built-ins. Omitting it is byte-identical to the zero-config behavior.
  */
 export function isSourceFile(filePath: string, overrides?: Record<string, Language>): boolean {
@@ -228,7 +236,7 @@ export async function loadGrammarsForLanguages(languages: Language[]): Promise<v
       languageCache.set(lang, language);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[CodeGraph] Failed to load ${lang} grammar — parsing will be unavailable: ${message}`);
+      console.warn(`[WitsOS] Failed to load ${lang} grammar — parsing will be unavailable: ${message}`);
       unavailableGrammarErrors.set(lang, message);
     }
   }
@@ -274,7 +282,7 @@ export function getParser(language: Language): Parser | null {
  * Detect language from file extension.
  *
  * `overrides` is the project's validated custom extension → language map (from
- * `codegraph.json`); when present its mappings take precedence over the built-in
+ * `WitsOS.json`); when present its mappings take precedence over the built-in
  * `EXTENSION_MAP`. Omitting it is byte-identical to the zero-config behavior.
  */
 export function detectLanguage(filePath: string, source?: string, overrides?: Record<string, Language>): Language {
@@ -436,6 +444,9 @@ export function getLanguageDisplayName(language: Language): string {
     twig: 'Twig',
     xml: 'XML',
     properties: 'Java properties',
+    plaintext: 'Plain Text',
+    markdown: 'Markdown',
+    csv: 'CSV',
     unknown: 'Unknown',
   };
   return names[language] || language;

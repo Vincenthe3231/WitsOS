@@ -1,4 +1,4 @@
-/**
+﻿/**
  * File Watcher
  *
  * Watches the project directory for file changes and triggers debounced sync
@@ -37,7 +37,7 @@ import { isSourceFile, buildScopeIgnore, type ScopeIgnore } from '../extraction'
 import { loadExtensionOverrides } from '../project-config';
 import { logDebug, logWarn } from '../errors';
 import { normalizePath } from '../utils';
-import { isCodeGraphDataDir } from '../directory';
+import { isWitsOSDataDir } from '../directory';
 import { watchDisabledReason } from './watch-policy';
 
 /**
@@ -51,7 +51,7 @@ const MAX_LOCK_RETRY_DELAY_MS = 30_000;
 
 /** Actionable degrade message; both exhaustion paths share it verbatim. */
 const EXHAUSTION_REASON =
-  'OS watch/file limit exhausted; auto-sync disabled. Run `codegraph sync` ' +
+  'OS watch/file limit exhausted; auto-sync disabled. Run `WitsOS sync` ' +
   '(or install git sync hooks) to refresh the graph after changes.';
 
 /**
@@ -65,7 +65,7 @@ const INOTIFY_LIMIT_REASON =
   'watching now covers only part of the project, so edits in unwatched ' +
   'directories will not auto-sync. Raise the limit (e.g. `sudo sysctl ' +
   'fs.inotify.max_user_watches=1048576`, persisted in /etc/sysctl.d) and ' +
-  'restart, or run `codegraph sync` (or install git sync hooks) to refresh.';
+  'restart, or run `WitsOS sync` (or install git sync hooks) to refresh.';
 
 /**
  * True when an error is OS watch/file-descriptor exhaustion (EMFILE/ENFILE).
@@ -119,14 +119,14 @@ export function __setFsWatchForTests(fn: WatchFn | null): void {
  * Upper bound on simultaneously-watched directories on the Linux per-directory
  * path. Each is one inotify watch; the kernel's `fs.inotify.max_user_watches`
  * is the hard limit (commonly 8k–128k). We stop adding watches past this and
- * log once — partial live-watch (with `codegraph sync` as the backstop) is far
+ * log once — partial live-watch (with `WitsOS sync` as the backstop) is far
  * better than exhausting the user's inotify budget and breaking watching
- * system-wide (#579). Tunable via CODEGRAPH_MAX_DIR_WATCHES.
+ * system-wide (#579). Tunable via WitsOS_MAX_DIR_WATCHES.
  */
 const DEFAULT_MAX_DIR_WATCHES = 50_000;
 
 function maxDirWatches(): number {
-  const raw = process.env.CODEGRAPH_MAX_DIR_WATCHES;
+  const raw = process.env.WitsOS_MAX_DIR_WATCHES;
   if (raw && /^\d+$/.test(raw)) {
     const n = Number(raw);
     if (n > 0) return n;
@@ -193,7 +193,7 @@ export interface WatchOptions {
  * external indexer can hit this every debounce cycle.
  */
 export class LockUnavailableError extends Error {
-  constructor(message = 'CodeGraph file lock unavailable; another process is writing') {
+  constructor(message = 'WitsOS file lock unavailable; another process is writing') {
     super(message);
     this.name = 'LockUnavailableError';
   }
@@ -229,7 +229,7 @@ export interface PendingFile {
  *   was the system-crashing fd leak on macOS (#644/#496/#555/#628).
  * - Debounced to avoid thrashing on rapid saves
  * - Filters to supported source files by extension
- * - Ignores .codegraph/ and .git/ regardless of .gitignore
+ * - Ignores .WitsOS/ and .git/ regardless of .gitignore
  * - Tracks per-file pending state so MCP tools can flag stale results
  *   without blocking on a sync (issue #403)
  */
@@ -333,7 +333,7 @@ export class FileWatcher {
     // Some environments make filesystem watching unusable — most notably
     // WSL2 /mnt/ drives, where the underlying fs.watch calls block long
     // enough to break MCP startup handshakes (issue #199). Skip watching
-    // there; callers fall back to manual `codegraph sync` or git sync hooks.
+    // there; callers fall back to manual `WitsOS sync` or git sync hooks.
     const disabledReason = watchDisabledReason(this.projectRoot);
     if (disabledReason) {
       logDebug('File watcher disabled', { reason: disabledReason, projectRoot: this.projectRoot });
@@ -565,12 +565,12 @@ export class FileWatcher {
 
   /** Our own dirs are always ignored, regardless of .gitignore. */
   private isAlwaysIgnored(rel: string): boolean {
-    // First path segment. Ignore any CodeGraph data dir — the active one AND a
-    // sibling like `.codegraph-win` a second environment (Windows/WSL) created
+    // First path segment. Ignore any WitsOS data dir — the active one AND a
+    // sibling like `.WitsOS-win` a second environment (Windows/WSL) created
     // in the same tree, so neither side watches the other's index (#636).
     const top = rel.split('/')[0] ?? rel;
     return (
-      isCodeGraphDataDir(top) ||
+      isWitsOSDataDir(top) ||
       rel === '.git' || rel.startsWith('.git/')
     );
   }
@@ -607,7 +607,7 @@ export class FileWatcher {
    * stop adding new watches for the rest of this session — every further
    * `inotify_add_watch` would fail too, so walking the rest of the tree is
    * waste. Unlike {@link degrade} this is NON-fatal: the watches already
-   * installed keep firing, and `codegraph sync` covers the unwatched remainder.
+   * installed keep firing, and `WitsOS sync` covers the unwatched remainder.
    * The message names the kernel knob to raise (`fs.inotify.max_user_watches`).
    */
   private warnInotifyLimit(context: Record<string, unknown> = {}): void {
@@ -789,8 +789,8 @@ export class FileWatcher {
         });
         if (this.lockRetryCount > MAX_LOCK_RETRIES) {
           this.degrade(
-            'CodeGraph file lock held by another process past the retry budget; ' +
-              'auto-sync disabled. Run `codegraph sync` once the other writer finishes ' +
+            'WitsOS file lock held by another process past the retry budget; ' +
+              'auto-sync disabled. Run `WitsOS sync` once the other writer finishes ' +
               '(or install git sync hooks) to refresh the graph.',
             { pendingFiles: this.pendingFiles.size, retryCount: this.lockRetryCount }
           );

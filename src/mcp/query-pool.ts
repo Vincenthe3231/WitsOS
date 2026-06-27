@@ -1,9 +1,9 @@
-/**
+﻿/**
  * Query pool — runs CPU-heavy read-tool calls on a pool of worker threads so
  * the shared daemon's main event loop stays free for the MCP transport.
  *
  * Why this exists: see {@link ./query-worker}. One daemon, one event loop, one
- * synchronous SQLite connection serializes every concurrent `codegraph_explore`
+ * synchronous SQLite connection serializes every concurrent `WitsOS_explore`
  * AND starves the transport (a 10-way wave delivered 0 transport heartbeats in
  * 25s — responses can't flush until the whole batch drains, so clients time
  * out). Spreading the dispatch across worker threads (each its own WAL read
@@ -19,7 +19,7 @@
  *     caller falls back to in-process dispatch instead of thrashing respawns.
  *   - graceful backstop: a call that can't be served within `softTimeoutMs`
  *     resolves with SUCCESS-shaped "busy, retry" guidance — never `isError`, so
- *     a momentary overload can't teach the agent to abandon codegraph — instead
+ *     a momentary overload can't teach the agent to abandon WitsOS — instead
  *     of hanging past the client's hard timeout.
  */
 
@@ -102,7 +102,7 @@ export interface QueryPoolOptions {
 }
 
 /**
- * Resolve the pool size from the `CODEGRAPH_QUERY_POOL_SIZE` override and the
+ * Resolve the pool size from the `WitsOS_QUERY_POOL_SIZE` override and the
  * machine's core count. `0` (or a negative) explicitly disables the pool (the
  * caller serves in-process — today's behavior). Unset → `clamp(cores-1, 1, 16)`:
  * leave a core for the main loop + OS, but never zero, since even one worker
@@ -118,7 +118,7 @@ export function resolvePoolSize(envVal: string | undefined, cpuCount: number): n
 }
 
 function resolveBusyTimeoutMs(): number {
-  const raw = process.env.CODEGRAPH_QUERY_BUSY_TIMEOUT_MS;
+  const raw = process.env.WitsOS_QUERY_BUSY_TIMEOUT_MS;
   if (raw === undefined || raw === '') return DEFAULT_BUSY_TIMEOUT_MS;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 1000) return DEFAULT_BUSY_TIMEOUT_MS;
@@ -132,7 +132,7 @@ function busyGuidance(waitedMs: number): ToolResult {
     content: [{
       type: 'text',
       text:
-        `CodeGraph is busy serving other concurrent requests right now (this call waited ${secs}s in the queue). ` +
+        `WitsOS is busy serving other concurrent requests right now (this call waited ${secs}s in the queue). ` +
         `This is NOT an error and the index is fine — wait a few seconds and retry this exact call; it will return normally. ` +
         `If you can't wait, use your built-in tools for just this one step.`,
     }],
@@ -235,7 +235,7 @@ export class QueryPool {
         job.retries++;
         this.queue.unshift(job); // head of line — retry promptly
       } else {
-        this.settle(job, { isError: true, content: [{ type: 'text', text: 'codegraph worker crashed; please retry the call.' }] });
+        this.settle(job, { isError: true, content: [{ type: 'text', text: 'WitsOS worker crashed; please retry the call.' }] });
       }
     }
     this.drain();
@@ -299,7 +299,7 @@ export class QueryPool {
     this.pendingWorkers.clear();
     this.idle = [];
     for (const job of [...this.inflight.values(), ...this.queue]) {
-      this.settle(job, { isError: true, content: [{ type: 'text', text: 'codegraph is shutting down; retry shortly.' }] });
+      this.settle(job, { isError: true, content: [{ type: 'text', text: 'WitsOS is shutting down; retry shortly.' }] });
     }
     this.inflight.clear();
     this.queue = [];

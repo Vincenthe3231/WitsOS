@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Database Queries
  *
  * Prepared statements for CRUD operations on the knowledge graph.
@@ -16,6 +16,7 @@ import {
   GraphStats,
   SearchOptions,
   SearchResult,
+  ChunkRecord,
 } from '../types';
 import { safeJsonParse } from '../utils';
 import { kindBonus, nameMatchBonus, scorePathRelevance } from '../search/query-utils';
@@ -179,7 +180,7 @@ export class QueryBuilder {
   // Project-name tokens (go.mod / package.json / repo dir), normalized. A query
   // word matching one is dropped from path-relevance scoring — it names the
   // whole project, not a symbol, so it carries no discriminative signal (#720).
-  // Set once by the CodeGraph instance; empty by default (no down-weighting).
+  // Set once by the WitsOS instance; empty by default (no down-weighting).
   private projectNameTokens: Set<string> = new Set();
 
   // Node cache for frequently accessed nodes (LRU-style, max 1000 entries)
@@ -219,6 +220,8 @@ export class QueryBuilder {
     getDominantFile?: SqliteStatement;
     getTopRouteFile?: SqliteStatement;
     getRoutingManifest?: SqliteStatement;
+    insertChunk?: SqliteStatement;
+    deleteChunksByFile?: SqliteStatement;
   } = {};
 
   constructor(db: SqliteDatabase) {
@@ -264,7 +267,7 @@ export class QueryBuilder {
 
     // Validate required fields to prevent SQLite bind errors
     if (!node.id || !node.kind || !node.name || !node.filePath || !node.language) {
-      console.error('[CodeGraph] Skipping node with missing required fields:', {
+      console.error('[WitsOS] Skipping node with missing required fields:', {
         id: node.id,
         kind: node.kind,
         name: node.name,
@@ -352,7 +355,7 @@ export class QueryBuilder {
 
     // Validate required fields
     if (!node.id || !node.kind || !node.name || !node.filePath || !node.language) {
-      console.error('[CodeGraph] Skipping node update with missing required fields:', node.id);
+      console.error('[WitsOS] Skipping node update with missing required fields:', node.id);
       return;
     }
 
@@ -593,7 +596,7 @@ export class QueryBuilder {
    * `route` nodes (framework-emitted: Express/Gin/Flask/Rails/Drupal/etc.).
    * Used by handleContext on small repos to inline the project's routing
    * config when the agent's query is about request flow — eliminating the
-   * "Glob + Read routes.rb" pattern that beats codegraph on tiny realworld
+   * "Glob + Read routes.rb" pattern that beats WitsOS on tiny realworld
    * template repos.
    *
    * Excludes test/generated files from candidacy. Returns null if there
@@ -1851,6 +1854,47 @@ export class QueryBuilder {
   }
 
   /**
+   * Insert prose chunks (document indexing). Wrapped in a transaction.
+   */
+  insertChunks(chunks: ChunkRecord[]): void {
+    if (chunks.length === 0) return;
+    if (!this.stmts.insertChunk) {
+      this.stmts.insertChunk = this.db.prepare(`
+        INSERT OR REPLACE INTO chunks
+          (id, file_path, node_id, chunk_index, char_start, char_end, body, metadata, updated_at)
+        VALUES
+          (@id, @filePath, @nodeId, @chunkIndex, @charStart, @charEnd, @body, @metadata, @updatedAt)
+      `);
+    }
+    const stmt = this.stmts.insertChunk;
+    this.db.transaction(() => {
+      for (const c of chunks) {
+        stmt.run({
+          id: c.id,
+          filePath: c.filePath,
+          nodeId: c.nodeId ?? null,
+          chunkIndex: c.chunkIndex,
+          charStart: c.charStart,
+          charEnd: c.charEnd,
+          body: c.body,
+          metadata: c.metadata ? JSON.stringify(c.metadata) : null,
+          updatedAt: c.updatedAt,
+        });
+      }
+    })();
+  }
+
+  /**
+   * Delete all chunks for a file (called before re-indexing).
+   */
+  deleteChunksByFile(filePath: string): void {
+    if (!this.stmts.deleteChunksByFile) {
+      this.stmts.deleteChunksByFile = this.db.prepare('DELETE FROM chunks WHERE file_path = ?');
+    }
+    this.stmts.deleteChunksByFile.run(filePath);
+  }
+
+  /**
    * Clear all data from the database
    */
   clear(): void {
@@ -1860,6 +1904,7 @@ export class QueryBuilder {
       this.db.exec('DELETE FROM edges');
       this.db.exec('DELETE FROM nodes');
       this.db.exec('DELETE FROM files');
+      this.db.exec('DELETE FROM chunks');
     })();
   }
 }

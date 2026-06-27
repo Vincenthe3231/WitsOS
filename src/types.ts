@@ -1,5 +1,5 @@
-/**
- * CodeGraph Type Definitions
+﻿/**
+ * WitsOS Type Definitions
  *
  * Core types for the semantic knowledge graph system.
  */
@@ -38,6 +38,9 @@ export const NODE_KINDS = [
   'export',
   'route',
   'component',
+  'document',
+  'section',
+  'chunk',
 ] as const;
 
 export type NodeKind = (typeof NODE_KINDS)[number];
@@ -95,6 +98,9 @@ export const LANGUAGES = [
   'twig',
   'xml',
   'properties',
+  'plaintext',
+  'markdown',
+  'csv',
   'unknown',
 ] as const;
 
@@ -238,6 +244,31 @@ export interface FileRecord {
 // =============================================================================
 
 /**
+ * A prose chunk stored in the `chunks` table (document/knowledge indexing).
+ * Parallel to Node but holds stored body text for full-text search over prose.
+ */
+export interface ChunkRecord {
+  /** Stable ID: chunkId(filePath, chunkIndex). */
+  id: string;
+  /** Source file path relative to project root. */
+  filePath: string;
+  /** Parent node ID (document or section node), if any. */
+  nodeId?: string;
+  /** Zero-based position within the file. */
+  chunkIndex: number;
+  /** Inclusive start character offset in the full extracted text. */
+  charStart: number;
+  /** Exclusive end character offset. */
+  charEnd: number;
+  /** The stored prose body (indexed by chunks_fts). */
+  body: string;
+  /** Per-format metadata (title, headingPath, page, …) as a plain object. */
+  metadata?: Record<string, unknown>;
+  /** Epoch ms when this chunk was written. */
+  updatedAt: number;
+}
+
+/**
  * Result from parsing a source file
  */
 export interface ExtractionResult {
@@ -255,6 +286,14 @@ export interface ExtractionResult {
 
   /** Extraction duration in milliseconds */
   durationMs: number;
+
+  /**
+   * Prose chunks for document/knowledge indexing (optional).
+   * Stored in the `chunks` table + `chunks_fts` FTS index.
+   * Only populated by document extractors (txt/md/csv/pdf/…);
+   * code extractors leave this undefined.
+   */
+  chunks?: ChunkRecord[];
 }
 
 /**

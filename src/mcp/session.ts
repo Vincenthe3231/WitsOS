@@ -1,9 +1,9 @@
-/**
+﻿/**
  * MCP per-connection session — speaks the JSON-RPC protocol (initialize,
  * tools/list, tools/call) over a single {@link JsonRpcTransport}. It owns
  * per-client state only (which protocol version the client asked for, whether
  * it advertised `roots`, the one-shot roots/list latch); the heavyweight
- * resources (CodeGraph, watcher, ToolHandler) live in the shared
+ * resources (WitsOS, watcher, ToolHandler) live in the shared
  * {@link MCPEngine} so daemon mode can collapse N inotify sets / DB handles
  * to one.
  *
@@ -17,8 +17,8 @@ import { JsonRpcRequest, JsonRpcNotification, JsonRpcTransport, ErrorCodes } fro
 import { MCPEngine } from './engine';
 import { tools } from './tools';
 import { SERVER_INSTRUCTIONS, SERVER_INSTRUCTIONS_NO_ROOT_INDEX } from './server-instructions';
-import { CodeGraphPackageVersion } from './version';
-import { findNearestCodeGraphRoot } from '../directory';
+import { WitsOSPackageVersion } from './version';
+import { findNearestWitsOSRoot } from '../directory';
 import { getTelemetry, ClientInfo } from '../telemetry';
 
 /**
@@ -28,8 +28,8 @@ import { getTelemetry, ClientInfo } from '../telemetry';
 // Exported so the proxy can answer `initialize` locally with the IDENTICAL
 // payload the daemon would send — no drift between the two handshake paths.
 export const SERVER_INFO = {
-  name: 'codegraph',
-  version: CodeGraphPackageVersion,
+  name: 'WitsOS',
+  version: WitsOSPackageVersion,
 };
 
 /** MCP Protocol Version (latest the server claims). */
@@ -195,12 +195,12 @@ export class MCPSession {
     // single-project playbook. When it ISN'T, send the per-project variant
     // (tools are still exposed — see handleToolsList): it tells the agent there
     // is no default project and to pass `projectPath` to any project that has a
-    // `.codegraph/`. Gating tool AVAILABILITY on whether `./` is indexed was the
+    // `.WitsOS/`. Gating tool AVAILABILITY on whether `./` is indexed was the
     // #964 bug — it broke monorepos (only sub-projects indexed) and never
-    // surfaced the tools after a mid-session `codegraph init`. When no explicit
+    // surfaced the tools after a mid-session `WitsOS init`. When no explicit
     // path is known yet (roots/list dance pending), cwd is the best predictor of
     // where the default project will resolve.
-    const indexed = findNearestCodeGraphRoot(explicitPath ?? process.cwd()) !== null;
+    const indexed = findNearestWitsOSRoot(explicitPath ?? process.cwd()) !== null;
 
     // Respond to the handshake BEFORE doing any heavy init — see issue #172.
     this.transport.sendResult(request.id, {
@@ -222,14 +222,14 @@ export class MCPSession {
     await this.retryInitIfNeeded();
     // Always expose the tools — even when the server root has no index. Gating
     // availability on whether `./` is indexed (the old behavior) breaks the
-    // monorepo case where only sub-projects carry a `.codegraph/` (the agent
+    // monorepo case where only sub-projects carry a `.WitsOS/` (the agent
     // saw zero tools and couldn't even reach an indexed sub-project by
     // `projectPath`), and it hides the tools from a session that started before
-    // the user ran `codegraph init` (most hosts request the list once, so the
+    // the user ran `WitsOS init` (most hosts request the list once, so the
     // freshly-built index never surfaces). #964. The not-indexed case is still
     // safe: a call against an un-indexed path returns SUCCESS-shaped guidance
-    // ("pass projectPath / run codegraph init"), never `isError`, so it can't
-    // teach the agent to abandon codegraph. `getTools()` returns the default
+    // ("pass projectPath / run WitsOS init"), never `isError`, so it can't
+    // teach the agent to abandon WitsOS. `getTools()` returns the default
     // surface even before a project is open.
     this.transport.sendResult(request.id, {
       tools: this.engine.getToolHandler().getTools(),
@@ -275,7 +275,7 @@ export class MCPSession {
    *   2. if still uninitialized and we never asked the client for its roots,
    *      do so now (one-shot); fall back to cwd if the client lacks roots;
    *   3. last-resort: re-walk from the best candidate — picks up projects
-   *      that were `codegraph init`'d *after* the server started.
+   *      that were `WitsOS init`'d *after* the server started.
    */
   private async retryInitIfNeeded(): Promise<void> {
     if (this.resolvePromise) {
@@ -283,7 +283,7 @@ export class MCPSession {
       this.resolvePromise = null;
     }
 
-    if (this.engine.hasDefaultCodeGraph()) return;
+    if (this.engine.hasDefaultWitsOS()) return;
 
     const hint = this.explicitProjectPath ?? this.engine.getProjectPath();
     if (!hint && !this.rootsAttempted) {
@@ -293,7 +293,7 @@ export class MCPSession {
         : this.engine.ensureInitialized(process.cwd());
       try { await this.resolvePromise; } catch { /* fall through */ }
       this.resolvePromise = null;
-      if (this.engine.hasDefaultCodeGraph()) return;
+      if (this.engine.hasDefaultWitsOS()) return;
     }
 
     // Last resort: walk from the best candidate (sync open). Picks up
@@ -314,11 +314,11 @@ export class MCPSession {
       if (rootPath) {
         target = rootPath;
       } else {
-        process.stderr.write('[CodeGraph MCP] Client returned no workspace roots; falling back to process cwd.\n');
+        process.stderr.write('[WitsOS MCP] Client returned no workspace roots; falling back to process cwd.\n');
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`[CodeGraph MCP] roots/list request failed (${msg}); falling back to process cwd.\n`);
+      process.stderr.write(`[WitsOS MCP] roots/list request failed (${msg}); falling back to process cwd.\n`);
     }
     await this.engine.ensureInitialized(target);
   }

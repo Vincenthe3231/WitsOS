@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Parse Worker
  *
  * Runs tree-sitter parsing in a separate thread so the main thread
@@ -63,7 +63,7 @@ parentPort!.on('message', async (msg: { type: string; id?: number; filePath?: st
     const { id, filePath, content, frameworkNames } = msg;
     try {
       // The main thread resolves the language (it holds the project's
-      // codegraph.json extension overrides) and sends it; fall back to detection
+      // WitsOS.json extension overrides) and sends it; fall back to detection
       // for older callers / safety.
       const language = msg.language ?? detectLanguage(filePath!, content);
       const result: ExtractionResult = extractFromSource(filePath!, content!, language, frameworkNames);
