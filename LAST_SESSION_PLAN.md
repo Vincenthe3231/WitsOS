@@ -1,466 +1,512 @@
-# Phase 6 — Audio Ingestion, Speech-to-Text & Generalized Worker Pool
+# Phase 6c (Video) — Engineering Design Review
 
-> Design document **and** implementation plan. Phase 6 is both a feature phase (audio → searchable
-> transcripts in the knowledge base) and an architectural milestone (the reusable worker pool that
-> OCR, STT, and embeddings all inherit). Per the maintainer's decisions: **sherpa-onnx** STT backend
-> (ONNX, no Python, prebuilt, opt-in, `pnpm`-installed), a **hand-rolled generalized JobPool**, and
-> **video deferred** to a later phase — Phase 6 ships **audio-only**, sized for a common computer user
-> and knowledge-base usability under WitsOS's zero-native-build / local-first constraints.
+> **Deliverable type:** architecture design document (NOT an implementation).
+> **Objective:** decide whether Phase 6c is mature enough to build now, and whether it should land
+> **before**, **after**, or **split around** Phase 7 (Embeddings).
+> **Method:** evidence gathered live from the WitsOS CodeGraph index (323 files, 5137 nodes), cited by `file:line`.
+> **Implementation action this plan authorizes:** save this document to `docs/design/phase-6c-video-design-review.md`. No code.
 
 ---
 
-## Context — why this change
+## Context — why this review exists
 
-`PLAN.md` Phase 6 introduces audio/video ingestion **and** the worker pool listed in §5 as a
-prerequisite for Phase 7 (embeddings) and a pull-forward of the Phase 5 "dedicated OCR worker thread"
-spike. The forcing problem is concrete and already in the tree:
+WitsOS (fork of CodeGraph) is becoming a universal local-first knowledge indexer. Phases 0–6b are complete:
+text/Office/PDF extraction, image OCR, audio STT, a generalized `JobPool`, and binary-safe adapters. Phase 6c
+(video: audio-track STT + embedded subtitles + keyframe extraction) is the last media type before Phase 7
+(embeddings). Video was deferred deliberately. The question now is not "how to build video" but **"is the
+substrate ready, and where does video sit relative to embeddings?"** The project's own rules force the framing:
 
-- **Heavy extractors run serially on the main thread today.** `ExtractionOrchestrator.indexAll`
-  routes image OCR and PDF through `runAsyncExtractor` ([src/extraction/index.ts:1397](src/extraction/index.ts) and
-  [:1790](src/extraction/index.ts)), which `await`s each file inline in the batch loop. OCR/STT/embedding
-  are 10–100× heavier than tree-sitter; running them on the main thread blocks the whole index and
-  starves the MCP socket/watchdog.
-- **The single recycled parse-worker** ([src/extraction/parse-worker.ts](src/extraction/parse-worker.ts), managed by inline
-  closures `ensureWorker`/`recycleWorker`/`requestParse` in `indexAll`) is the right idea but is
-  hard-wired for one worker and one job kind.
+- **Refactor first, then add types** (PLAN.md line 14) — so structural debt video would amplify must be paid first.
+- **Partial coverage is worse than none** (CLAUDE.md) — a half-built video path that returns junk teaches agents to abandon the tool.
+- **Zero-native-build by default** — ffmpeg/ONNX/models are opt-in, never bundled. Video must not change that.
+- **Byte-stable code indexing; never regress** — node/edge counts for code files must be identical before/after.
 
-The intended outcome: a **generalized JobPool** that (a) moves every heavy extractor off the main
-thread, (b) keeps DB writes serialized on the main thread, and (c) becomes the substrate Phase 7
-reuses — delivered alongside the first heavy consumer, **audio STT**, as an opt-in capability that a
-normal user can turn on without breaking the pure-WASM default install.
+The conclusion (stated up front): **Phase 6c is NOT ready to build as one phase. Split it into 4 sub-phases,
+pay 5 architectural preconditions first, and straddle Phase 7 — the text-yielding parts before embeddings, the
+visual/keyframe part after.** Detail and evidence below.
 
 ---
 
 ## 1. Executive summary
 
-| Decision | Choice | Rationale |
+| Question | Answer |
+|---|---|
+| Build 6c now, as specified? | **No.** Decompose + pay preconditions first. |
+| Decompose into? | **6c-1** metadata+subtitles · **6c-2** audio-track STT · **6c-3** keyframes+visual · (metadata folds into 6c-1). |
+| Sequence vs Phase 7? | **Straddle.** 6c-1 + 6c-2 **before** Phase 7 (they only emit text chunks, which embeddings consume generically). 6c-3 **after/with** Phase 7 (its real payoff is image embeddings; OCR-only keyframes = partial coverage). |
+| Phase 7 readiness gate | **GO WITH CONDITIONS** — and Phase 7 does **not** depend on video existing. |
+
+**Why video is mostly wiring, not new capability:** audio-track STT reuses 6b *entirely* (ffmpeg already demuxes;
+sherpa already transcribes). Subtitle extraction is pure-JS text parsing — the *cheapest* class, like Office/PDF,
+no new native dep. Only keyframe extraction introduces a genuinely new asset class (frame images → thumbnails →
+pixels for embeddings), and that asset class has **no storage design and no value without embeddings**.
+
+**The five preconditions** (each amplified by video, each already latent debt):
+1. Generalize async/binary extractor dispatch (kill the `isAsyncExtractorLanguage` god-branch).
+2. Decide/fix `JobPool` per-lane concurrency (it is silently ignored today) and pipeline async media (stop `await`-ing each file serially).
+3. Add a temp-file manager with guaranteed cleanup (none exists; keyframes can't live in memory).
+4. Bound media memory (STT buffers whole PCM → OOM on hour-long tracks).
+5. Kind-gate the MCP flow tools (`callers`/`callees`/`impact`) so document/section nodes stop polluting code answers.
+
+---
+
+## 2. Repository findings (via CodeGraph)
+
+All paths verified against the live index.
+
+### 2.1 The extraction pipeline has TWO dispatch mechanisms (hidden coupling)
+
+```
+                         detectLanguage(grammars.ts:315)
+                                   │
+              ┌────────────────────┴─────────────────────┐
+              │                                            │
+   isAsyncExtractorLanguage()?                    (everything else)
+   pdf | image | audio (grammars.ts:378)                   │
+              │ YES                                          ▼
+              ▼                                  requestParse → JobPool 'parse' lane
+   indexAll hardcoded branch (index.ts:1335-1362)   → extractFromSource(tree-sitter.ts:5669)
+   ├─ audio → pool.submit('stt')                          → resolveExtractor(ExtractorRegistry)
+   ├─ image/pdf → pool.submit('ocr')                      → first-match-wins registration
+   └─ fallback → runAsyncExtractor(index.ts:1741)            (svelte/vue/dfm/mybatis/...)
+        if/else: image→ImageExtractor, audio→AudioExtractor, else PDF
+```
+
+**Finding:** the `ExtractorRegistry` ([extractor-registry.ts:53](src/extraction/extractor-registry.ts)) advertises
+"a new type = one `registerExtractor` call." That is **only true for synchronous, string-source extractors.**
+Binary/async media (the path video must join) is dispatched by a **hardcoded language enum + a hardcoded if/else +
+a hardcoded lane switch**. The registry's `create(filePath, source: string)` signature can't even express a
+binary extractor (no Buffer, no async lane hint). Adding video today means editing **all of**:
+`LANGUAGES`/`EXTENSION_MAP` (grammars.ts), `isAsyncExtractorLanguage`, the `indexAll` lane switch,
+`runAsyncExtractor`, and a new worker — five sites, not one. **This is the single biggest structural debt video exposes.**
+
+### 2.2 Async media is processed SEQUENTIALLY
+
+In `indexAll` the media branch is `asyncResult = await pool.submit('stt'|'ocr', …)` **inside the per-file loop**
+([index.ts:1347, 1355](src/extraction/index.ts)). Each media file fully completes before the next starts. Code
+files get a worker thread but the loop still `await`s media one at a time. For a repo with many/large videos this
+serializes the heaviest workload in the system. (Code parsing is also awaited per-file, but tree-sitter is ~10–100×
+cheaper, so it doesn't bite the way media will.)
+
+### 2.3 JobPool accepts `concurrency` but runs ONE worker per lane
+
+`LaneState.worker` is a single `WorkerType | null`; `_ensureWorker` returns the lone `lane.worker`
+([job-pool.ts:51, 206](src/workers/job-pool.ts)). `registerLane` stores `concurrency` ([job-pool.ts:71](src/workers/job-pool.ts))
+but nothing ever spawns a second worker. The ocr/stt lanes register `concurrency: 1` anyway
+([index.ts:1198, 1212](src/extraction/index.ts)), so it's currently moot — but the option is a **latent lie**: any
+future "set stt concurrency: 4" silently does nothing. Video's parallelism story can't rest on this until it's real.
+(Contrast: `src/mcp/query-pool.ts` is a *separate* true multi-worker pool for MCP queries — the two pools should not be confused.)
+
+### 2.4 STT buffers the entire decoded PCM in memory
+
+`decodeAudioToPcm` concatenates ffmpeg stdout into one Buffer ([ffmpeg.ts:86-103](src/extraction/audio/ffmpeg.ts)),
+then `transcribe` views it as one Float32Array ([backend.ts:160](src/extraction/stt/backend.ts)). At 16 kHz mono
+f32, **1 hour ≈ 230 MB resident per file**; a 3-hour lecture ≈ 690 MB. Video audio tracks are routinely hours long.
+The timeout already scales with duration ([audio-extractor.ts:103](src/extraction/languages/audio-extractor.ts)),
+but memory does not. This is a pre-existing 6b risk that video makes routine.
+
+### 2.5 No temp-file manager
+
+The audio path never touches disk for intermediates — it streams ffmpeg → memory. There is no module that owns a
+scratch directory, no cleanup-on-crash/cancel/timeout. Keyframe extraction *must* write frame images somewhere;
+without a managed temp lifecycle, a killed/timed-out worker leaks PNGs.
+
+### 2.6 Graceful degradation is the established, correct pattern
+
+`AudioExtractor._extract` degrades to **document-only** on every failure: STT disabled, sherpa missing, ffmpeg
+missing, decode fail, transcribe fail, zero segments ([audio-extractor.ts:77-140](src/extraction/languages/audio-extractor.ts)).
+`loadSttBackend`/`loadOcrBackend` return `null` (never throw) when the optional package is absent. Video must
+preserve this discipline exactly (subtitle-missing, codec-unsupported, no-video-stream → degrade, never error).
+
+### 2.7 Storage is chunk-centric and already flexible
+
+`schema.sql`: `chunks(id, file_path FK→files ON DELETE CASCADE, node_id, chunk_index, char_start/end, body,
+metadata TEXT, updated_at)` + `chunks_fts(id, file_path, body, metadata)` triggers. `ChunkRecord.metadata` is
+`Record<string, unknown>` ([types.ts:256](src/types.ts)). Audio already stuffs `{start, end, speaker, sttEngine,
+sttModel}` into it ([audio-extractor.ts:200](src/extraction/languages/audio-extractor.ts)). **No `embedding_status`
+column, no vector table, no asset/keyframe/blob table.** `NodeKind` already has `document` + `section`
+([types.ts:39-42](src/types.ts)); `Language` is a const array with no `video`.
+
+### 2.8 Search already covers any text we emit as chunks
+
+`searchChunks` runs BM25 over `chunks_fts` ([queries.ts:1902](src/db/queries.ts)); `witsos query` surfaces
+`nodes_fts` + `chunks_fts` in two sections. **Any subtitle/STT/OCR text emitted as a chunk is searchable for free.**
+No vector search yet (that is Phase 7).
+
+### 2.9 MCP flow tools are not kind-gated
+
+`callers`/`callees`/`impact` in `src/mcp/tools.ts` operate on any node; nothing excludes `document`/`section`
+(no gating found — PLAN.md §6 lists this as still-open). Code-flow answers can already be polluted by doc nodes;
+video adds many more.
+
+### 2.10 Runtime/version mismatch (the "annoying error")
+
+`MIN_NODE_MAJOR = 20` and `engines: >=20 <25` ([node-version-check.ts:48](src/bin/node-version-check.ts)), but
+`node:sqlite` requires **22.5** ([sqlite-adapter.ts:10](src/db/sqlite-adapter.ts)). Bundled-runtime installs ship a
+compatible Node, but "run from source" on Node 20/21 fails the SQLite open with a confusing message; Node 25 is
+hard-blocked (V8 turboshaft WASM OOM). The floor advertised (20) is below the floor actually required (22.5).
+
+---
+
+## 3. Current architecture diagram
+
+```
+                                  witsos index
+                                        │
+                          ExtractionOrchestrator.indexAll (index.ts:1077)
+                                        │
+                 scanDirectoryAsync → detectFrameworks → JobPool setup
+                                        │
+                 ┌──────────────────────┼───────────────────────┐
+            register 'parse'      register 'ocr' (if .js)   register 'stt' (if .js)
+            warm() grammars        concurrency:1              concurrency:1
+                                        │
+                       per-file loop (FILE_IO_BATCH_SIZE parallel READS)
+                                        │
+                 ┌──────────────────────┴───────────────────────┐
+        isAsyncExtractorLanguage?                          (code/text)
+          (pdf|image|audio)                                     │
+                 │ YES (await, serial)                          ▼
+     ┌───────────┼────────────┐                       requestParse → 'parse' worker
+   audio        image/pdf    fallback                  → extractFromSource
+   'stt' lane   'ocr' lane   runAsyncExtractor           → ExtractorRegistry / TreeSitter
+     │            │            │
+  stt-worker   ocr-worker   (in-process)
+  AudioExtractor ImageExtractor/PdfExtractor
+     │            │            │
+  ffmpeg decode  ONNX OCR      ...
+  sherpa STT
+     │            │            │
+     └────────────┴────────────┴──────► ExtractionResult {nodes, edges, chunks}
+                                        │
+                       storeExtractionResult (MAIN THREAD, serialized)
+                       deleteFile → insertNodes/Edges/Refs → upsertFile → insertChunks
+                                        │
+                       SQLite (WAL): nodes/edges/files/chunks + *_fts triggers
+```
+
+---
+
+## 4. Proposed architecture diagram (post-precondition, video-ready)
+
+Changes vs current are marked `★`.
+
+```
+                          ExtractionOrchestrator.indexAll
+                                        │
+              ★ MediaExtractorRegistry (async/binary registrations:
+                {match, lane, createAsync(filePath, bytesOrPath, cfg, tmp)})
+                                        │
+              register lanes from registry  ★ + 'video' lane  ★ + 'embed' lane (P7)
+                                        │
+                       per-file loop  ★ media SUBMITTED not awaited
+                                     ★ bounded in-flight window (back-pressure)
+                                        │
+        ┌───────────────────────────────┼───────────────────────────────┐
+   code 'parse'                     media lanes (★ true concurrency)   ★ embed (P7)
+        │                ┌──────────┬──────────┬──────────┐
+        │              'stt'      'ocr'      'video' ★
+        │                │          │          │
+        │           AudioExtractor ImageEx.  VideoExtractor ★
+        │                │          │          │  ├─ ffprobe metadata (6c-1)
+        │                │          │          │  ├─ subtitle demux/sidecar (6c-1) → chunks
+        │                │          │          │  ├─ audio track → reuse STT path (6c-2) → chunks
+        │                │          │          │  └─ keyframes → ★TempFileMgr → OCR/embed (6c-3)
+        │                │          │          │
+        └────────────────┴──────────┴──────────┴──────► ExtractionResult {nodes, edges, chunks ★+assets?}
+                                        │
+                       storeExtractionResult (MAIN THREAD, serialized — unchanged)
+                       ★ + embedding_status on files; ★ assets (only if keyframes persisted)
+                                        │
+                       SQLite (WAL)  ★ + vec table (P7)  ★ + status two-dimension
+```
+
+---
+
+## 5. Dependency graph (what 6c touches)
+
+```
+Phase 6c (video)
+├── grammars.ts            EXTENSION_MAP (+.mp4/.mkv/.mov/.webm/.avi), Language (+'video'),
+│                          isAsyncExtractorLanguage, isLanguageSupported          [EDIT]
+├── extractor dispatch     ★ generalize before edit (precondition #1)
+│   ├── index.ts           indexAll lane switch, runAsyncExtractor                [EDIT → refactor]
+│   └── extractor-registry / NEW MediaExtractorRegistry                           [NEW]
+├── workers/
+│   ├── job-pool.ts        concurrency fix / pipelining (precondition #2)         [EDIT]
+│   └── video-worker.ts    NEW entrypoint (mirrors stt/ocr-worker)               [NEW]
+├── extraction/languages/
+│   └── video-extractor.ts NEW orchestrator (metadata+subs+audio+keyframes)      [NEW]
+├── extraction/
+│   ├── audio/ffmpeg.ts    add demux-audio-track + extract-subtitle + keyframe ops [EDIT]
+│   ├── stt/*              REUSED unchanged (audio-track path)                     [REUSE]
+│   ├── ocr/*              REUSED unchanged (keyframe path)                        [REUSE]
+│   ├── subtitles/*        NEW pure-JS SRT/VTT/ASS parser                         [NEW]
+│   └── util/tempfiles.ts  NEW temp-file manager (precondition #3)                [NEW]
+├── project-config.ts      ProjectConfig.video block, scaffoldProjectConfig,
+│                          workers.{video}, loadVideoConfig                        [EDIT]
+├── db/                    NO schema change for 6c-1/6c-2; assets table only if
+│                          6c-3 persists thumbnails                                [MAYBE]
+├── mcp/tools.ts           kind-gating callers/callees/impact (precondition #5)    [EDIT]
+└── tests/                 video-extractor, subtitle parser, gating matrix,
+                           node-count parity canary, install-size guard            [NEW]
+```
+
+---
+
+## 6. Worker interaction diagram
+
+```
+ main thread (orchestrator)                worker threads (1 per lane today)
+ ─────────────────────────                 ──────────────────────────────────
+ JobPool.submit('video', {filePath,        video-worker.ts
+   videoConfig, rootDir, tmpDir})  ───────► VideoExtractor.extract()
+                                              │ ffprobe (streams, subs, duration, codec)
+                                              │ subtitle present? ── yes ─► parse → chunks  (cheap)
+                                              │                   └─ no ──► demux audio track
+                                              │                              → reuse STT (sherpa)  (heavy)
+                                              │ keyframes? ─► ffmpeg scene-detect → TempFileMgr
+                                              │               → OCR each frame (reuse ONNX)  (heavy)
+                                              ▼
+                                            postMessage({_poolId, result})  OR  {error}
+   ◄──────────────────────────────────────────┘
+ timeout(300s+)/AbortSignal/crash → reject + terminate + ★ TempFileMgr.cleanup(jobId)
+ storeExtractionResult (serialized DB write)
+```
+
+**Critical:** today a single lane = a single worker, and the orchestrator `await`s each media job. With many
+videos the lane is a queue of one. Precondition #2 is what turns this diagram from "serial" into "pipelined."
+
+---
+
+## 7. Data flow diagram (one video file)
+
+```
+foo.mp4 (bytes on disk; NOT read into the string-source path — async/binary)
+   │
+   ├─(6c-1) ffprobe ─► {duration, container, vstreams[res,fps,codec], astreams[lang], subs[lang,format]}
+   │            └─► document node (kind:document, language:'video', metadata) + metadata chunk
+   │
+   ├─(6c-1) subtitle track(s) present?
+   │            ├─ embedded → ffmpeg -map s:0 ─► .vtt (TempFileMgr) ─► SRT/VTT/ASS parser
+   │            ├─ sidecar  → foo.srt/.vtt next to foo.mp4 ─► parser
+   │            └─► section nodes (per cue-group) + chunks {body, metadata:{start,end,track,source:'subtitle'}}
+   │
+   ├─(6c-2) NO usable subtitle → demux audio (ffmpeg -map a:0 -f f32le) ─► reuse AudioExtractor/STT
+   │            └─► section nodes + chunks {metadata:{start,end,sttEngine,source:'stt'}}
+   │
+   └─(6c-3) keyframes (scene-change or interval) ─► ffmpeg -vf select ─► PNG/JPEG (TempFileMgr)
+                ├─ OCR text? ─► chunks {body, metadata:{frameTime, source:'ocr-frame'}}
+                └─ pixels ─► (Phase 7b) image embedding ─► vec rows
+   │
+   ▼
+ExtractionResult{ nodes:[document, section…], edges:[contains…], chunks:[…] }  (+ assets? only if thumbnails kept)
+   ▼
+storeExtractionResult → chunks_fts (searchable now) ; vec (Phase 7)
+```
+
+---
+
+## 8. Storage impact
+
+| Need | Verdict | Justification |
 |---|---|---|
-| STT runtime | **sherpa-onnx** (the `sherpa-onnx` package, `pnpm add`) behind a pluggable `SttBackend` seam | node-addon-api + onnxruntime, **prebuilt** cross-platform, **no Python**; runs Whisper / Parakeet / Moonshine / SenseVoice as ONNX; ships VAD + diarization. Same onnxruntime family Phase 5 OCR already uses → one runtime story. Model choice stays configurable behind the seam. |
-| Concurrency | **Hand-rolled generalized `JobPool`** (`src/workers/`) | Generalizes the existing single-worker manager; zero new deps; the only design that models the WASM-recycle-every-250 invariant Tinypool/Piscina don't. Per-kind concurrency caps, bounded queue, priority lanes, AbortSignal cancel, graceful shutdown. |
-| Media decode | **FFmpeg** via `ffmpeg-static` (optional, user-pulled), child-process sidecar | Normalizes any audio (`mp3/m4a/flac/ogg/opus/wav`) → 16 kHz mono PCM that STT wants. GPL-3.0 binary kept at arm's length from WitsOS's package (never bundled). |
-| Scope | **Audio STT (6a) + worker pool.** Video deferred. | Per maintainer. Ships one capability fully (transcripts with timestamps, status, search) rather than half-shipping video — honors PLAN's no-partial-coverage rule. |
-| Default install | **Unchanged** — pure WASM + `node:sqlite` | STT/FFmpeg/models are opt-in (`WitsOS.json` `"stt": { "enabled": true }`) + optional packages, gated exactly like OCR. |
+| Video file metadata (codec, duration, resolution, fps) | **No schema change** | Ride `chunks.metadata` JSON + the `document` node's docstring/qualifiedName, exactly as audio rides `{start,end,speaker,...}` ([audio-extractor.ts:200](src/extraction/languages/audio-extractor.ts)). |
+| Subtitle tracks / cues | **No schema change** | Each cue-group → a `section` node + a chunk; timing in `chunk.metadata`. |
+| STT segments | **No schema change** | Identical to 6b audio. |
+| Frame timestamps / OCR provenance | **No schema change** | `chunk.metadata.frameTime` + `metadata.source`. |
+| Thumbnail / keyframe **images** (binary) | **New storage IF persisted** | SQLite is the wrong place for blobs. Recommend: **don't persist pixels** for 6c-3 OCR-only value — OCR the frame, emit text chunk, discard image. If Phase 7b needs pixels, store thumbnails as files under `.witsos/assets/<sha>/` referenced by `chunk.metadata.assetPath`, with an optional `assets(id, file_path, sha, kind, rel_path, meta)` table — **defer this to Phase 7b, not 6c.** |
+| `embedding_status` on `files` | **New column — but a Phase 7 prereq, not a 6c need** | Already listed PLAN.md §5. Add when the embed lane lands. |
+| Vector table | **Phase 7** | sqlite-vec or sidecar. Out of 6c scope. |
 
-Everything heavyweight is opt-in and lazy-loaded, returning `null`-not-throw when absent (the OCR
-backend pattern). The code-indexing path stays byte-stable; node/edge counts for code files are a
-hard regression canary.
-
----
-
-## 2. Current architecture analysis
-
-**Pipeline** (`files → ExtractionOrchestrator → DB`), with the relevant seams already in place:
-
-- **File enumeration / classification** — `scanDirectory*` (git-visible or fs walk) → `detectLanguage`
-  + `EXTENSION_MAP`. Classification is extension-based; adding a type = one `EXTENSION_MAP` entry.
-- **Adapter stage** — `adaptFile` ([src/extraction/source-adapter.ts](src/extraction/source-adapter.ts)): binary-safe `SourceAdapter`
-  registry, first-match-wins, `IdentityAdapter` UTF-8 default. The pre-extraction normalization seam.
-- **Extractor dispatch** — `resolveExtractor` ([src/extraction/extractor-registry.ts](src/extraction/extractor-registry.ts)):
-  `StandaloneExtractor.extract(): ExtractionResult | Promise<ExtractionResult>` — **already async-capable**;
-  first-match-wins; falls through to tree-sitter. Adding a type = one `registerExtractor` call.
-- **Sync (tree-sitter) path** — `requestParse` → single recycled parse-worker. Recycle @ 250 parses
-  (`WORKER_RECYCLE_INTERVAL`, WASM heap never shrinks), per-language reset @ 5000
-  (`PARSER_RESET_INTERVAL` in the worker), 10 s + scaled timeout, crash → reject-all + respawn,
-  post-pass retry for WASM-OOM files. Reads batched `FILE_IO_BATCH_SIZE = 10` in parallel.
-- **Async (heavy) path — the bottleneck** — `isAsyncExtractorLanguage(lang)` (`grammars.ts`) routes
-  image/PDF to `runAsyncExtractor`, which runs **inline on the main thread**, one file at a time
-  ([src/extraction/index.ts:1401–1428](src/extraction/index.ts)). This is what the pool replaces.
-- **Storage (main thread only)** — `storeExtractionResult` ([src/extraction/index.ts:1810](src/extraction/index.ts)):
-  hash-skip, `deleteFile` cascade, `insertNodes`/`insertEdges` (FK-filtered), cross-file incoming-edge
-  re-resolution (#899), `upsertFile`, `insertChunks` → `chunks_fts`. SQLite (`node:sqlite`) is not
-  thread-safe → **all writes serialize here. Invariant; must not regress.**
-- **Backend seam reference** — `OcrBackend` ([src/extraction/ocr/backend.ts](src/extraction/ocr/backend.ts)) +
-  `ImageExtractor` ([src/extraction/languages/image-extractor.ts](src/extraction/languages/image-extractor.ts)): lazy-load optional
-  dep, cache engine, `loadOcrBackend()` returns `null` when absent; extractor degrades to
-  document-only (no chunks) when disabled / package missing / recognition fails. `WitsOS.json` `ocr`
-  block validated + cached in [src/project-config.ts](src/project-config.ts). **This trio is the exact template for STT.**
-- **Force-re-extract for binaries** — binary files have a stable content hash even when config
-  changes, so `indexAll` calls `deleteFile` before async extraction (index.ts:1407) to bypass the
-  hash-equality skip. STT needs the same when `stt.model` changes.
-
-**Where the pool integrates:** replace the inline worker closures in `indexAll` with a `JobPool`
-instance, and reroute *both* `requestParse` and `runAsyncExtractor` through it. Producer (read +
-adapt) submits jobs; pool runs them across kind-scoped lanes; main thread drains results into
-`storeExtractionResult`.
-
-**Note — schema/kinds have already grown for docs:** `document` and `section` node kinds are in use
-(image-extractor), beyond the code-centric `NodeKind` list in CLAUDE.md. Phase 6 adds audio segment
-nodes in the same family — they must be gated out of code-flow MCP tools (see §14).
+**Bottom line:** 6c-1 and 6c-2 require **zero schema migration** — they emit chunks, which the existing
+`chunks`/`chunks_fts` tables already store and search. Only 6c-3 *might* need an `assets` table, and only if it
+persists thumbnails — which it should not, until Phase 7b.
 
 ---
 
-## 3. Worker pool architecture — the `JobPool`
+## 9. Performance analysis
 
-New module `src/workers/job-pool.ts`. A typed, kind-routed pool; the existing inline parse-worker
-logic generalized — **not** a third-party pool (Tinypool/Piscina can't express the per-250-parse WASM
-recycle and would be bent out of shape to do so; the repo's ethos is hand-rolled mechanism, e.g. the
-TOML serializer).
+Relative cost per stage (order-of-magnitude; CPU-bound, no GPU assumed):
 
-```ts
-type JobKind = 'parse' | 'ocr' | 'stt' | 'embed';      // 'embed' reserved for Phase 7
+| Stage | CPU | Memory | Disk/Temp | Bottleneck |
+|---|---|---|---|---|
+| Metadata (ffprobe) | trivial | trivial | none | process spawn |
+| Subtitle extract+parse | low | low | small temp (.vtt) | none — pure JS |
+| Audio demux (ffmpeg) | low–med | streams | none if streamed | ffmpeg decode |
+| STT (sherpa) | **very high** | **230 MB/hr (whole PCM)** | none | inference, single-thread |
+| Keyframe sampling (ffmpeg) | med (scene-detect = full decode) | streams | **N × frame PNG** | full video decode |
+| OCR per frame (ONNX) | **high** | per-frame | per-frame | inference × frame count |
+| Thumbnail gen | low | low | per-frame | encode |
+| Chunk generation | trivial | low | none | none |
 
-interface Job<I, O> {
-  kind: JobKind;
-  payload: I;                 // e.g. { filePath, content, language, frameworkNames }
-  priority?: number;          // lower = sooner; default by kind (parse < ocr < stt)
-  signal?: AbortSignal;
-  timeoutMs?: number;         // default by kind; STT scales with audio duration
-}
+**System-level reality:**
+- **Throughput is gated by the single-worker lanes + serial `await` loop** (§2.2, §2.3), not raw inference. Ten 1-hour videos today = ten sequential STT runs.
+- **Cold cache:** first STT/OCR pays model download (whisper to `~/.witsos/models`) + model load (cached per-process after, [backend.ts:116](src/extraction/stt/backend.ts)). Video doesn't change this — it *reuses* the cached recognizers/engines.
+- **Warm cache:** model reuse across files is already in place (recognizer Map keyed by model). Good.
+- **Incremental indexing:** binary files are force-deleted before re-extraction ([index.ts:1341](src/extraction/index.ts)) because their content hash is stable across config changes — so **every `sync` re-transcribes/re-OCRs every video unless guarded.** This is a real cost cliff for video. Recommend: a content-hash + config-hash guard so unchanged videos with unchanged config skip re-processing (see Risk R7).
+- **4K / hour-long:** keyframe scene-detect forces a full decode of a 4K stream — minutes of CPU per file. Subtitle-first (6c-1) avoids this entirely when captions exist.
+- **Many videos:** the dominant scenario; needs pipelining (precondition #2) or it is unusable.
 
-class JobPool {
-  submit<I, O>(job: Job<I, O>): Promise<O>;   // queues; resolves with worker result
-  capacityFor(kind: JobKind): number;          // free slots — producer backpressure
-  onDrain(kind: JobKind): Promise<void>;       // resolves when a lane has capacity
-  drain(): Promise<void>;                       // await all in-flight + queued
-  shutdown(): Promise<void>;                    // terminate all, reject pending
-}
-```
+**Latency invariant to preserve:** FTS pre-index and code indexing must stay fast and must not wait on media
+(PLAN.md §2). Media is post-processing-shaped; it must never block `witsos index` completion for the code graph.
 
-**Transport — hybrid, by kind (the key design point):**
+---
 
-- `parse`, `ocr`, `stt` recognition → **`worker_threads`** (WASM tree-sitter; ONNX native addons —
-  `onnxruntime-node`, `sherpa-onnx` — are addon-safe in worker threads).
-- **FFmpeg** decode → **`child_process`** spawned *from inside* the `stt` worker (a separate CLI
-  binary, killable, isolated, security-flagged). The stt worker orchestrates: spawn ffmpeg → PCM
-  buffer → sherpa-onnx recognize in-thread → return `ExtractionResult`. The pool's lane abstraction
-  also leaves room for a future long-lived `child_process` sidecar lane (if a Python engine is ever
-  added) without core change.
+## 10. Stability trade-offs (with recommended defaults)
 
-**Per-kind worker entrypoints:** one script per kind under `src/workers/` (move `parse-worker.ts`
-here as `workers/parse-worker.ts`; add `ocr-worker.ts`, `stt-worker.ts`). Each loads only its own
-deps (parse → grammars; stt → sherpa-onnx + model). The pool spawns/recycles per kind.
-
-**Concurrency caps (RAM-aware, not just CPU):**
-
-| Kind | Default cap | Why |
+| Trade-off | Recommendation | Why |
 |---|---|---|
-| parse | ≈ CPU count (clamped) | light (~50–100 MB/worker for grammars); throughput win over today's single worker |
-| ocr | 1–2 | ONNX det/rec sessions are memory-heavy |
-| stt | 1 (configurable) | model resident in RAM (base ≈ 150–300 MB, small ≈ 0.5–1 GB); realtime-bound, not parallelism-bound |
-| embed | (Phase 7) | TBD |
-
-Overridable via `WitsOS.json` `workers` block. Caps are the backpressure ceiling: the producer awaits
-`onDrain(kind)` before submitting more, so file contents/audio buffers never accumulate unbounded
-(critical on large repos).
-
-**Lifecycle preserved from today, generalized:** timeout per kind → terminate + reject + respawn;
-crash (native segfault on bad media / WASM OOM) → reject in-flight on that worker, respawn, mark file
-errored, continue; recycle after N jobs (parse keeps 250; stt/ocr recycle by RSS threshold or after
-each large job since models dominate). Graceful shutdown rejects pending. **DB writes never move off
-the main thread** — workers only return `ExtractionResult`.
-
----
-
-## 4. Job scheduling design
-
-- **Priority lanes, no head-of-line blocking.** Lanes run concurrently: `parse` drains first so code
-  search is ready fast; `ocr`/`stt` run in background lanes and never block code/doc indexing. This
-  is the PLAN §2 "classifier → parallel handlers" invariant, realized through the pool.
-- **Producer/consumer with bounded in-flight.** The batch loop becomes: read+adapt file → `submit`
-  → collect result promise; gate new reads on `capacityFor`/`onDrain`. Replaces today's
-  `await requestParse` serial step. Memory bounded by `Σ cap` across lanes, not file count.
-- **Resumability (operationally important for STT).** STT over hundreds of files = hours; a `file_jobs`
-  table (§9) records per-(file, kind) state so an interrupted run resumes — skip `done`, retry
-  `pending`/`errored` — instead of re-transcribing from scratch.
-- **Cancellation.** `witsos` Ctrl-C / `AbortSignal` propagates: pending jobs dropped, in-flight
-  worker terminated (forceful) or allowed to finish (graceful) per kind.
+| Subtitles vs STT | **Subtitle-first, STT-fallback** | Subtitles are authored text — cheaper, more accurate, no inference. Only transcribe when no usable subtitle track exists. Massive compute saving. |
+| Prefer embedded vs sidecar subs | **Sidecar (`foo.srt`) first, then embedded** | Sidecar is free (no demux); embedded needs an ffmpeg map. |
+| Trust subtitle timing | **Yes, store as-is** | Cue timestamps are reliable; carry in `metadata.start/end`. |
+| OCR every frame vs keyframes | **Keyframes only (scene-change)** | Per-frame OCR is unbounded cost; scene-change frames capture slide/screen transitions. |
+| Frame interval | **Scene-detect with a min-interval floor (e.g. ≥2 s)** | Avoids thousands of near-duplicate frames on high-motion video. |
+| Frame dedup | **Yes (perceptual/again-scene-threshold)** | Don't OCR/embed near-identical frames. |
+| Persist temp images | **No for 6c-3 (OCR then discard)**; files-on-disk only when Phase 7b needs pixels | Avoids blob storage + asset schema until embeddings justify it. |
+| Streaming decode | **Stream audio; temp-file keyframes** | Audio already streams; frames can't be all-in-memory. |
+| Caching / re-index | **Hash content + config; skip unchanged** | Defeats the force-delete re-process cliff (§9, R7). |
+| Early termination | **Cap keyframes/duration per file via config** | Bound worst case on pathological inputs. |
+| Retry policy | **No auto-retry of media inference** | Inference failures are deterministic; retry wastes minutes. Degrade to partial. |
+| Timeouts | **Scale by duration (as 6b does)**, separate per stage | A stuck ffmpeg must not hang the lane. |
+| Partial success | **Yes — emit what succeeded, degrade the rest** | Subtitle ok but keyframe OCR failed → still index subtitles. |
 
 ---
 
-## 5. STT engine comparison & decision
-
-Requirements weighed: **no Python in the default path · prebuilt (no compile) · local/offline ·
-cross-platform · diarization + word/segment timestamps · ecosystem maturity · fits the in-process
-ONNX pattern already established by Phase 5.**
-
-| Engine | Runtime | Prebuilt Node? | Python? | Diarization | Fit |
-|---|---|---|---|---|---|
-| **sherpa-onnx** ✅ | onnxruntime (native addon) | **Yes** (`sherpa-onnx` pkg, node-addon-api, multi-thread) | No | **Yes** (segmentation + speaker embeddings) + VAD | **Best.** Runs Whisper/Parakeet/Moonshine/SenseVoice as ONNX → engine-agnostic behind one runtime; same onnxruntime family as OCR; Apache-2.0. |
-| whisper.cpp Node (nodejs-whisper, @fugood/whisper.node) | GGML/GGUF C++ | Mostly **build-on-install** (cmake) | No | No (Whisper only) | Breaks zero-native-build even opt-in; no diarization. |
-| faster-whisper / WhisperX | CTranslate2 / PyTorch | No | **Yes** | WhisperX: best | Heaviest; Python sidecar packaging burden; furthest from the pattern. |
-| OpenAI Whisper (ref) | PyTorch | No | **Yes** | No | Slow, heavy, Python. Reference only. |
-| NVIDIA Parakeet / NeMo | NeMo/PyTorch (or **ONNX via sherpa-onnx**) | via sherpa-onnx | (native: yes) | — | Fast + accurate; **consume as an ONNX model through sherpa-onnx**, not the NeMo stack. |
-| Moonshine | ONNX | via sherpa-onnx | No | No | Tiny/fast English short-form; **a model choice under sherpa-onnx**. |
-| Vosk | Kaldi | Yes (native) | No | limited | Lightweight/streaming but lower accuracy; superseded by sherpa-onnx in the same niche. |
-| DeepSpeech | TF | — | — | — | Abandoned. Reject. |
-| Cloud (Deepgram/AssemblyAI/OpenAI) | API | — | — | yes | Breaks local-first. **Comparison only.** |
-
-**Decision: `sherpa-onnx` as the backend *runtime*, model configurable.** It turns "which STT
-engine?" into "which ONNX model?" (a `WitsOS.json` setting), so Whisper-base for accuracy,
-Parakeet/Moonshine for speed, multilingual variants — all swap without code change. VAD + diarization
-come built in.
-
-**`SttBackend` seam** (`src/extraction/stt/backend.ts`), mirroring `OcrBackend`:
-
-```ts
-interface SttSegment { text: string; start: number; end: number; speaker?: string; confidence: number }
-interface SttResult  { segments: SttSegment[]; language: string; engine: string }
-interface SttOptions { language?: string; model?: string; diarize?: boolean; minConfidence?: number }
-interface SttBackend { readonly name: string; transcribe(audio: Buffer, opts?: SttOptions): Promise<SttResult> }
-async function loadSttBackend(): Promise<SttBackend | null>   // lazy import('sherpa-onnx'); null if absent
-function __setSttBackendForTests(b: SttBackend | null | undefined): void
-```
-
-`SherpaOnnxSttBackend` lazy-loads `sherpa-onnx`, caches the recognizer (model load is expensive),
-VAD-segments long audio, optionally diarizes. Engine + model id stored in chunk metadata for
-provenance and for re-transcribe invalidation.
-
-**Model management** (`src/extraction/stt/models.ts`): models (40 MB–1.5 GB) are **never bundled** —
-resolved from `stt.model` (size keyword or path) → cache dir (`~/.witsos/models/` or
-`.witsos/models/`) → downloaded over HTTPS with **checksum verification** on first use, or supplied
-via `stt.modelPath` for offline/air-gapped users. Status surfaces "model ready / downloading / missing".
-
----
-
-## 6. FFmpeg evaluation
-
-STT needs uniform 16 kHz mono PCM; arbitrary audio (`mp3/m4a/aac/flac/ogg/opus/wma`) must be decoded.
-A pure-JS demux can't cover the codec spread; FFmpeg is the pragmatic decoder.
-
-- **Distribution:** `ffmpeg-static` ships a prebuilt static binary per platform (mac x64/arm64,
-  linux x64/arm64/armhf, win x64) — **no compile** (zero-native-build-compatible *mechanism*), but
-  ~70 MB and **GPL-3.0**. Keep it an **optional, user-pulled** dependency (`pnpm add ffmpeg-static`),
-  never bundled into WitsOS's MIT package, so GPL stays at arm's length from distribution. Also accept
-  a system `ffmpeg` on `PATH` (`stt.ffmpegPath` override) so users who already have it skip the download.
-- **Probe:** `ffprobe` (via `ffmpeg-ffprobe-static`) for duration → scales the STT timeout and powers
-  status ETAs.
-- **Wrapper** `src/extraction/audio/ffmpeg.ts`: locate binary → spawn child to decode → **pipe PCM
-  to stdout into a Buffer** (no temp file where possible; scratch dir + cleanup as fallback) → feed
-  sherpa-onnx. Security flags (see §12): `-nostdin`, `-protocol_whitelist file`, no network, timeout,
-  killable.
-- **Alternatives** (`@ffmpeg-installer/ffmpeg`, `@rse/ffmpeg`) are equivalent prebuilt-binary plays;
-  no meaningful advantage. WASM `ffmpeg.wasm` is too slow for batch decode. → **FFmpeg stays optional,
-  via `ffmpeg-static`/PATH.**
-
----
-
-## 7. Audio ingestion strategy (video deferred)
-
-`AudioExtractor` (`src/extraction/languages/audio-extractor.ts`) — structural twin of `ImageExtractor`:
-
-1. Re-read file as bytes (binary; orchestrator passes UTF-8). 2. FFmpeg decode → 16 kHz mono PCM
-buffer. 3. `SttBackend.transcribe` (VAD-segmented; optional diarization). 4. Emit **1 `document`
-node** (whole file) + **`section` nodes per transcript window/segment** + **chunks** in `chunks_fts`,
-with **`{ start, end, speaker?, sttEngine, sttModel, confidence }` in chunk metadata** so search can
-deep-link to a timestamp ("jump to 03:12") — the core KB-usability win for a common user.
-
-**Gating mirrors OCR exactly** (no-partial-coverage rule): STT disabled → document-only, zero chunks;
-enabled but `sherpa-onnx`/`ffmpeg` missing → document-only + one-line warn (never an error result);
-music/silence-only or all-sub-`minConfidence` → document-only. Wire-up: `audio` Language +
-`EXTENSION_MAP` entries + `isAsyncExtractorLanguage('audio') = true` + `registerExtractor` + route the
-async path through the **pool's `stt` lane** (not main thread).
-
-**Video deferred** to its own later phase: audio-track STT, **embedded subtitle/caption extraction**
-(`ffmpeg -map 0:s` → SRT/VTT → chunks; cheap, deterministic, no model — likely the first video win),
-keyframe/scene extraction (needs VLM/embeddings). Deferring avoids half-shipping video.
-
----
-
-## 8. Plugin / backend architecture
-
-The three capability seams — `OcrBackend`, `SttBackend`, future `EmbeddingBackend` — are the plugin
-system. Each: lazy-loads an **optional** package (`pnpm add …`), **`null`-not-throw** when absent, configured
-by a `WitsOS.json` capability block, model/runtime resolved on demand. The repetition is now deliberate
-enough to extract a generic helper `loadOptionalBackend<T>(pkg, factory)` (dedupes the
-`loadOcrBackend`/`loadSttBackend` probe + cache).
-
-- **Sidecar lifecycle:** FFmpeg = child-process per job (killable, timeout, security-flagged);
-  sherpa-onnx = in-thread native addon; a future Python engine = long-lived child-process sidecar over
-  stdio — all expressible as pool lanes without touching the core.
-- **Discovery / capability negotiation:** on enable, probe package + model presence; surface in
-  `witsos status` ("STT: enabled · model base ready" vs "enabled but `sherpa-onnx` not installed —
-  `pnpm add sherpa-onnx`").
-- **Versioning:** record `{ engine, model }` in chunk metadata + file record → re-transcribe only when
-  the model/engine changes (the binary-hash-stable invalidation problem, solved like OCR's
-  `deleteFile`-before-extract).
-- **Config (`WitsOS.json`):**
-  ```jsonc
-  {
-    "stt": { "enabled": false, "model": "base", "language": "auto",
-             "diarize": false, "modelPath": null, "ffmpegPath": null, "minConfidence": 0.0 },
-    "workers": { "parse": null, "ocr": 1, "stt": 1 }   // null = auto (≈ CPU for parse)
-  }
-  ```
-  Validated + cached in `project-config.ts` exactly like the `ocr` block (frozen defaults,
-  warn-and-skip on malformed, mtime cache).
-
-### 8.1 Interactive opt-in — detect the extension, offer to enable (don't make users hand-edit JSON)
-
-Requiring a user to know about and hand-write `WitsOS.json` `"stt": { "enabled": true }` is poor
-discoverability. Instead, **detect eligible files during a CLI run and offer to turn the capability on**
-— but gated so it never misbehaves headless. (This applies to OCR too, retrofitting the same flow.)
-
-**Flow (interactive CLI only — `witsos init` / `index`):** after the scan, if eligible files are
-present (`audio` for STT, `image` for OCR), the capability is **unset** in `WitsOS.json`, **and**
-`process.stdout.isTTY`:
-
-```
-Found 23 audio files (.mp3, .m4a). Enable speech-to-text?
-  This installs sherpa-onnx + ffmpeg-static (~80 MB) and downloads the "base" model (~150 MB).
-  Transcripts become searchable in your knowledge base.  [y/N]
-```
-
-- **Yes** → write `stt.enabled: true` (+ chosen model) to `WitsOS.json`; offer to run
-  `pnpm add sherpa-onnx ffmpeg-static` (or print it); proceed (this run indexes audio if deps already
-  present, else next run).
-- **No** → write `stt.enabled: false` so the choice is **remembered** and we never re-prompt; audio
-  indexes document-only.
-
-**Hard gates (so the prompt never becomes a liability):**
-- **Non-interactive contexts never prompt** — MCP daemon (`serve --mcp`), CI, piped/`--yes`, non-TTY:
-  a server that blocks on stdin would wedge, and prompting an agent violates the "errors/prompts teach
-  abandonment" rule. There it stays the silent default (off → document-only).
-- **Decision persists in `WitsOS.json`** (the shared, VCS-committed config), so it's a **one-time**
-  prompt per project, and a team inherits the choice.
-- A `--no-prompt` flag and a `WitsOS.json` `"prompts": false` escape hatch both suppress it.
-
-This keeps zero-config-default-off intact for agents/servers while giving a human running `witsos`
-a one-keystroke path to enabling the feature — discoverability without breaking local-first or the
-never-bundled rule (deps are still opt-in, just offered at the right moment).
-
----
-
-## 9. Performance & 10. Scalability
-
-- **Cold start:** sherpa-onnx model load 0.5–3 s (paid once, recognizer cached across files); ffmpeg
-  spawn ~50 ms/file.
-- **Throughput (the dominant reality):** STT is realtime-factor-bound — Whisper-base on CPU ≈ 2–8×
-  realtime (10-min clip → ~1.5–5 min); Parakeet/Moonshine faster. A repo with hundreds of audio files
-  = **hours**. ⇒ STT **must** be a background lane, never blocking code/doc indexing, and **resumable**
-  (`file_jobs`). Parse, by contrast, gets *faster* than today: N parse workers vs one.
-- **Memory:** caps are RAM-aware (§3); STT cap 1 by default keeps a single model resident. Pool
-  budget respects machine RAM rather than blindly using CPU count.
-- **Disk/temp:** prefer ffmpeg PCM piped to a Buffer (no temp file); scratch-dir fallback with cleanup.
-- **Incremental:** hash-skip unchanged files; re-transcribe only on model/engine change.
-- **DB contention:** unchanged — serialized main-thread writes. The pool can *produce* results faster
-  than one worker did, so **confirm `storeExtractionResult` batches per-file inserts in a transaction**
-  (PLAN §6 item) to avoid the write path becoming the new bottleneck.
-- **Scales to large repos** because heavy lanes are bounded + backgrounded + resumable; code search
-  readiness is decoupled from transcript completeness (two progress dimensions, §below).
-
----
-
-## 11. Failure recovery
+## 11. Failure mode analysis
 
 | Failure | Handling |
 |---|---|
-| ffmpeg fails (corrupt/DRM/no audio track) | degrade to document-only + warn; never error the run (mirrors `ImageExtractor`) |
-| STT worker crash (addon segfault on bad input) | pool rejects in-flight job on that worker, respawns, marks file `errored`, continues |
-| Timeout (pathological/huge file) | per-kind timeout (STT scaled by ffprobe duration) → terminate + respawn |
-| Transient (worker OOM) vs deterministic (corrupt file) | retry-once on a fresh worker for transient (parse already does); no retry for deterministic |
-| Model missing/offline | document-only + actionable warn; status shows "model missing" |
-| Interrupted run | `file_jobs` resumes — skip `done`, retry `pending`/`errored` |
+| Broken/truncated container | ffprobe fails → degrade to document-only node; warn. |
+| Unsupported codec | ffmpeg decode error → document-only; warn (never `isError`). |
+| No audio stream | Skip STT stage; still do subtitles/metadata. |
+| No video stream (audio-in-mp4) | Route as audio (reuse STT); no keyframes. |
+| Encrypted/DRM | Decode fails → document-only. |
+| Corrupted subtitles | Parser try/catch → skip subs, fall through to STT. |
+| Huge file (hours, 4K) | Duration-scaled timeout + memory bound (#4) + keyframe cap. |
+| OOM (whole-PCM) | **Precondition #4** — decode to temp file + windowed streaming for long media. |
+| Worker crash | JobPool `exit`/`error` reject pending + respawn ([job-pool.ts:228-242](src/workers/job-pool.ts)); **+ TempFileMgr.cleanup(jobId)**. |
+| ffmpeg hang/timeout | per-stage timeout → SIGKILL child ([ffmpeg.ts:92](src/extraction/audio/ffmpeg.ts)); reject job. |
+| Model missing | `loadSttBackend`/`loadOcrBackend` → null → document-only + install hint ([audio-extractor.ts:80-95](src/extraction/languages/audio-extractor.ts)). |
+| Disk full (temp/keyframes) | TempFileMgr write fails → skip keyframe stage, keep text stages; warn. |
+| Cancellation (AbortSignal) | submit rejects ([job-pool.ts:133](src/workers/job-pool.ts)); **+ temp cleanup**; partial results already stored are valid. |
+| Shutdown mid-index | `pool.shutdown()` rejects pending ([job-pool.ts:192](src/workers/job-pool.ts)); next `sync` resumes (file-level, see R7). |
+| Partial DB write | Single-file `storeExtractionResult` is one transaction path; a crash mid-file leaves that file un-upserted → re-processed next run (acceptable). |
+| Duplicate chunks | Chunk ids are `chunkId(filePath, index)`; `deleteFile` cascades before insert — no dupes. |
+| Hash mismatch / re-index | Force-delete (§9) currently re-processes; add config+content hash guard (R7). |
 
 ---
 
-## 12. Risk analysis
+## 12. Risk register
 
-- **Zero-native-build (highest):** `sherpa-onnx` (prebuilt addon) and `ffmpeg-static` (prebuilt
-  binary) are both native + large. **Mitigation:** opt-in + optional packages, gated like OCR; default
-  `pnpm` install stays pure WASM + `node:sqlite`; **install-size guard** (`pnpm pack`) must not grow.
-- **License:** `ffmpeg-static` is GPL-3.0 → keep as a user-pulled optional dep, never bundled, so GPL
-  doesn't infect WitsOS's MIT distribution. `sherpa-onnx` Apache-2.0 (verify at pin time). Document both.
-- **Model distribution:** 40 MB–1.5 GB; never bundled; HTTPS download + checksum verify + cache;
-  `modelPath` for air-gapped.
-- **Security (FFmpeg parses untrusted media — CVE history):** spawn with `-nostdin`,
-  `-protocol_whitelist file` (no network/SSRF), timeout, killable, scratch-dir scoped. Verify model
-  download checksums. No execution of media-embedded metadata.
-- **Partial-coverage debt:** ship audio STT *fully* (timestamps, chunks, status, search) — defer video
-  rather than half-ship it.
-- **Junk transcripts pollute FTS:** `minConfidence` filter + VAD (skip silence/music) + music-only →
-  document-only.
-- **Cross-platform:** validate `sherpa-onnx` prebuild load + ffmpeg spawn on **win (current VM) + mac +
-  linux (docker)** per CLAUDE.md.
-- **Code-path regression:** generalizing the parse worker risks node-count drift — pin with parity
-  canary (below). This is the byte-stable-sensitive step.
+| # | Risk | Sev | Mitigation |
+|---|---|---|---|
+| R1 | Async-dispatch god-branch makes video a 5-site edit; future media worse | **High** | Precondition #1: `MediaExtractorRegistry` (async/binary registrations). |
+| R2 | Single-worker lanes + serial `await` → unusable on many/large videos | **High** | Precondition #2: real per-lane concurrency + pipelined submit/back-pressure. |
+| R3 | Whole-PCM (and large frames) OOM on long media | **High** | Precondition #4: temp-file decode + windowed streaming; keyframe caps. |
+| R4 | Keyframe temp images leak on crash/cancel | **Med** | Precondition #3: TempFileMgr with cleanup hooks. |
+| R5 | document/section nodes pollute code-flow MCP answers | **Med** | Precondition #5: kind-gate callers/callees/impact (success-shaped "n/a"). |
+| R6 | Partial coverage (keyframes w/o embeddings) trains agents to abandon | **High** | Sequence 6c-3 **after** Phase 7; ship subtitle/STT (full value) first. |
+| R7 | Every `sync` re-transcribes/re-OCRs all media (force-delete) | **Med** | Content+config hash guard before re-processing binary media. |
+| R8 | Install-size / native-build creep (ffmpeg/onnx) | **Med** | Keep all heavy deps opt-in, never bundled; install-size guard test (PLAN §8). |
+| R9 | Cross-platform ffmpeg/ffprobe path (Windows `.exe`, ARM) | **Med** | Reuse `locateFfmpeg`; validate on the Parallels Windows VM + Docker Linux. |
+| R10 | Version floor mismatch (engines 20 vs node:sqlite 22.5) | **Low–Med** | Raise `engines` floor to `>=22.5 <25`; align `MIN_NODE_MAJOR`. |
+| R11 | Naming drift: "CodeGraph"/`codegraph_*` increasingly misnames a media engine | **Low** | Cosmetic; binary already `witsos`. Defer a rename pass. |
 
 ---
 
-## 13. Recommended implementation plan
+## 13. Refactoring recommendations (with timing)
 
-Ordered so the risky refactor lands first behind the existing parity tests, then the new capability
-stacks on a proven pool.
-
-0. **Extract `JobPool`** — `src/workers/job-pool.ts` from the inline `indexAll` closures; move
-   `parse-worker.ts` → `src/workers/parse-worker.ts`. Route `parse` through the pool (cap = parse
-   workers; behavior-preserving). **VERIFY node-count parity** before proceeding.
-1. **Move OCR/PDF off the main thread** — reroute `runAsyncExtractor` onto the pool's `ocr` lane
-   (`src/workers/ocr-worker.ts`). Delivers Phase 5's open "dedicated OCR worker thread" spike. OCR
-   tests stay green.
-2. **`audio` classification** — `Language` + `EXTENSION_MAP` (`mp3/wav/m4a/aac/flac/ogg/opus/wma`) +
-   `isAsyncExtractorLanguage('audio')` in `grammars.ts`.
-3. **`SttBackend` seam** — `src/extraction/stt/backend.ts` (`SherpaOnnxSttBackend`, `loadSttBackend`,
-   `__setSttBackendForTests`), mirroring `ocr/backend.ts`.
-4. **Model management** — `src/extraction/stt/models.ts` (resolve → cache → download + checksum / path).
-5. **FFmpeg wrapper** — `src/extraction/audio/ffmpeg.ts` (locate binary, decode → PCM buffer, security
-   flags, timeout; ffprobe duration).
-6. **`AudioExtractor`** — `src/extraction/languages/audio-extractor.ts`, OCR-style gating; emits
-   document + per-segment section nodes + timestamped chunks.
-7. **Wire-up** — `registerExtractor(audio)`; route async audio through the pool's `stt` lane.
-8. **Config** — `stt` + `workers` blocks in `project-config.ts` (validated, defaults, cached); add a
-   `WitsOS.json` writer (the prompt persists the user's choice).
-9. **Interactive opt-in (§8.1)** — TTY-gated capability detection in `witsos init`/`index`: eligible
-   files + unset capability + `isTTY` → prompt → persist `enabled` to `WitsOS.json` + offer
-   `pnpm add`. Hard-gate off for MCP/CI/non-TTY/`--no-prompt`. Retrofit OCR onto the same helper.
-10. **Status / UX** — `file_jobs` table (or per-capability columns) tracking per-(file, kind)
-   `pending/running/done/error` + retries; `witsos status` reports **separate dimensions**
-   (parse/FTS % · ocr % · stt % · embed % later) + queue/retry visibility; add `transcribing` lane to
-   `IndexProgress`.
-11. **Tests** — fake `SttBackend` (like `__setOcrBackendForTests`); audio-extractor gating matrix;
-    opt-in prompt (TTY → prompts + persists choice; non-TTY/`--no-prompt`/daemon → never prompts,
-    stays off); pool unit tests (concurrency cap, bounded queue/backpressure, AbortSignal cancel,
-    recycle interval, crash → respawn, graceful shutdown); node-count parity canary; install-size guard.
-12. **Docs** — `docs/design/phase6-worker-pool-stt.md` (this design); CHANGELOG `[Unreleased]`;
-    `PLAN.md` updates (§15).
+| Refactor | When | Rationale |
+|---|---|---|
+| **Async/binary `MediaExtractorRegistry`** (kill `isAsyncExtractorLanguage` + `runAsyncExtractor` if/else) | **Before 6c** | Video is the 4th async type; the god-branch is now clearly the wrong shape. Follows "refactor first, then add types." |
+| **JobPool concurrency: implement or document; pipeline media submit** | **Before 6c** | R2; the heaviest workload must be parallelizable. |
+| **TempFileMgr** (scratch dir + cleanup on done/crash/cancel) | **Before 6c-3** (not needed for 6c-1/6c-2) | Keyframes write to disk; nothing owns cleanup. |
+| **Media memory bound** (decode-to-temp + windowed streaming) | **Before 6c-2** (also fixes 6b) | R3 — long audio tracks already at risk. |
+| **MCP kind-gating** (callers/callees/impact) | **Before/with 6c** | R5; already overdue (PLAN §6). |
+| **embedding_status column + two-dimension `witsos status`** | **Before Phase 7** | PLAN §5; not a 6c need but gates 6c-3 (which rides embeddings). |
+| **Re-process guard** (content+config hash for binary media) | **During 6c** | R7; otherwise sync cost is unbounded. |
+| **Raise Node floor to 22.5** | **Independent, anytime** | R10; removes the recurring confusing error. |
+| **`assets` table + thumbnail storage** | **Phase 7b only** | Don't build blob storage until embeddings need pixels. |
+| **Rename CodeGraph→WitsOS in tool/type names** | **After Phase 7** | Cosmetic; avoid churn mid-feature. |
 
 ---
 
-## 14. Suggested repository refactors
+## 14. Preconditions checklist (must be true before 6c starts)
 
-- **`src/workers/`** — new home for `JobPool` + per-kind worker entrypoints (relocate `parse-worker.ts`).
-- **`loadOptionalBackend<T>`** — generic lazy-load/cache helper deduping `loadOcrBackend` /
-  `loadSttBackend` (and Phase 7's embedding backend).
-- **Batched SQLite writes** — confirm `storeExtractionResult` per-file inserts are wrapped in a
-  transaction (PLAN §6); matters more once the pool feeds results faster.
-- **Kind-aware MCP tools** — `callers`/`callees`/`impact` are meaningless on `document`/`section`/audio
-  segment nodes; gate by node kind (`src/mcp/tools.ts`, `server-instructions.ts`) so doc/audio nodes
-  don't pollute code-flow answers (PLAN §6).
-- **`chunks_fts` in search** — ensure `searchNodes`/a `searchChunks` path surfaces transcript chunks;
-  a transcript no one can search is half-shipped (PLAN §6).
-
-## 15. Suggested `PLAN.md` updates
-
-- **Phase 5** open spike "dedicated OCR worker thread" → **delivered** by the Phase 6 pool (step 1).
-- **Phase 6 row** → split: **6a Audio STT + generalized worker pool** (this work) ✅-track; **video**
-  (audio-track STT + embedded subtitles + keyframes) → **new later phase, deferred**. Note: worker pool
-  generalized here, reused in Phase 7.
-- **§5 prerequisite table** → "Single parse-worker → Worker pool" satisfied by Phase 6; `embedding_status`
-  column + explicit classifier still pending for Phase 7.
-- **STT backend pivot recorded** (like the OCR ONNX pivot): sherpa-onnx (ONNX, no Python), FFmpeg
-  optional, models opt-in/downloaded.
+- [ ] **P1 — Generalized async/binary dispatch.** A registry expresses `{match, lane, createAsync(filePath, bytesOrPath, cfg, tmp)}`; `indexAll` drives media from it; `isAsyncExtractorLanguage`/`runAsyncExtractor` collapse into it. *Why: video must be one registration + one worker, not a 5-site edit.*
+- [ ] **P2 — Lane concurrency decided + media pipelined.** Either implement multi-worker lanes or remove the `concurrency` option; orchestrator submits media without per-file `await` serialization, with a bounded in-flight window. *Why: R2 — usability on many/large videos.*
+- [ ] **P3 — TempFileMgr** with guaranteed cleanup on success/crash/cancel/timeout. *Why: keyframes write to disk (only blocks 6c-3).* 
+- [ ] **P4 — Media memory bound.** Long-media decode goes to temp + windowed streaming; per-file caps. *Why: R3, also fixes latent 6b OOM.*
+- [ ] **P5 — MCP kind-gating** for callers/callees/impact (success-shaped "not applicable" for document/section). *Why: R5, partial-coverage discipline.*
+- [ ] **P6 — Re-process guard** (content+config hash) so `sync` skips unchanged media. *Why: R7.*
+- [ ] **P7 (for 6c-3 only) — Phase 7 embed lane + `embedding_status` exist.** *Why: keyframe value is image embeddings; OCR-only = partial coverage (R6).*
 
 ---
 
-## Verification
+## 15. Postconditions checklist (must be true after 6c succeeds)
 
-- **Suite green** — `pnpm test` (esp. `extraction.test.ts`, `frameworks-integration.test.ts`,
-  installer contract suite).
-- **Node-count parity** — re-index this repo before/after; `codegraph_status` total nodes/edges
-  **unchanged for code files** (canary after step 0).
-- **Pool unit tests** — N concurrent honored; bounded queue applies backpressure; cancel mid-flight;
-  worker crash → respawn + file errored (not whole-run abort); recycle @ interval; graceful shutdown
-  rejects pending.
-- **Audio smoke** — fixture `.wav` + `stt.enabled` + `sherpa-onnx` installed → `document` + `section`
-  nodes + chunk appear → `witsos query` finds transcript text; `{start,end}` in chunk metadata.
-  Disabled → document-only, byte-identical to no-STT.
-- **Install-size guard** — `pnpm pack` size unchanged (STT/FFmpeg/models optional, not in default).
-- **Cross-platform** — ffmpeg spawn + `sherpa-onnx` prebuild load validated on **win (current VM) +
-  mac + linux (docker)** per CLAUDE.md.
+- [ ] **No code regression** — `codegraph_status` node/edge totals for code files byte-identical before/after (PLAN §8).
+- [ ] **Worker stability** — crash/timeout/cancel respawn cleanly; no orphaned ffmpeg children; no leaked temp files.
+- [ ] **Memory bounded** — hour-long + 4K media index without OOM.
+- [ ] **Search works** — subtitle/STT/OCR text discoverable via `witsos query` (chunks_fts) with timing metadata.
+- [ ] **Chunks generated** — `document` + `section` nodes + chunks per video, with `metadata.source` provenance.
+- [ ] **Partial failures recover** — subtitle-ok/keyframe-failed still indexes subtitles; all failures degrade, none `isError`.
+- [ ] **Status reporting** — `witsos status` shows media progress distinctly (and embedding% once Phase 7 lands).
+- [ ] **Cancellation** — AbortSignal drains workers + cleans temp; stored partials remain valid.
+- [ ] **Tests + benchmarks** — video-extractor, subtitle parser, gating matrix, node-count parity canary, install-size guard; throughput numbers recorded.
+- [ ] **Install size unchanged** — `pnpm pack` size flat; ffmpeg/onnx/models still opt-in, never bundled.
+- [ ] **Cross-platform** — validated on macOS (dev), Linux (Docker `--init`), Windows (Parallels VM); ffmpeg `.exe`/ARM path resolution confirmed.
+- [ ] **Incremental** — re-`sync` of unchanged videos is a no-op (P6).
 
-**Sources (ecosystem grounding):**
-[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) ·
-[sherpa-onnx (registry)](https://www.npmjs.com/package/sherpa-onnx) ·
-[tinypool](https://github.com/tinylibs/tinypool) ·
-[piscina](https://github.com/piscinajs/piscina) ·
-[nodejs-whisper](https://www.npmjs.com/package/nodejs-whisper) ·
-[ffmpeg-static](https://www.npmjs.com/package/ffmpeg-static)
+---
+
+## 16. Phase 7 readiness report
+
+**Verdict: GO WITH CONDITIONS.**
+
+**Key insight: Phase 7 does NOT depend on Phase 6c.** Embeddings consume `chunks` — a media-agnostic abstraction
+(`ChunkRecord`) that *already exists* and is *already populated* by code/docs/PDF/OCR/STT. The embed lane is
+reserved in `JobKind` (`'embed'`, [job-pool.ts:24](src/workers/job-pool.ts)) and unused. Therefore embeddings can
+proceed in parallel with — or before — most of video.
+
+**Conditions to start Phase 7 (independent of video):**
+1. `embedding_status` column on `files` + two-dimension `witsos status` (FTS% / embed%) — PLAN §5.
+2. Embeddings stay **media-agnostic**: embed `chunks`, never branch on `language === 'video'`. (Answers Step 10: embeddings should NOT know video exists; subtitle/STT/OCR/metadata all normalize to chunks upstream.)
+3. The **image/keyframe** cross-modal case is explicitly a separate **Phase 7b** (image embeddings + optional `assets` storage) — do not smuggle pixels into the text-chunk path.
+4. Decide local model strategy (privacy/size) before the embed lane ships — PLAN §7 risk.
+5. P1/P2 (dispatch + lane concurrency) benefit Phase 7's embed lane too; doing them first de-risks both.
+
+**Why not unconditional GO:** without the `embedding_status`/status work and the media-agnostic contract, the embed
+lane would either block `index` completion or produce a silent "is semantic search ready?" gap — the same
+partial-coverage failure the project forbids.
+
+**Why not NO GO:** there is no hard technical blocker — chunks, the worker pool, and the lane reservation all exist.
+
+---
+
+## 17. Concrete recommendations, ordered by implementation priority
+
+1. **Pay P1 (generalized async/binary dispatch).** Highest-leverage refactor; everything else rides it. *(before 6c)*
+2. **Pay P2 (lane concurrency + pipelined media submit).** Makes media throughput viable. *(before 6c)*
+3. **Pay P4 (media memory bound) + P3 (TempFileMgr).** Removes the OOM/leak class. *(before 6c-2/6c-3)*
+4. **Pay P5 (MCP kind-gating) + P6 (re-process guard).** Cheap, overdue, protects answers and sync cost. *(with 6c)*
+5. **Ship 6c-1 (metadata + subtitles).** Cheapest, highest value/cost ratio, pure-JS, no schema change, no new native dep. *(before Phase 7)*
+6. **Ship 6c-2 (audio-track STT, subtitle-fallback).** Reuses 6b entirely. *(before Phase 7)*
+7. **Start Phase 7 (embeddings over chunks)** once its conditions (§16) are met — in parallel with the above; it does not wait on keyframes.
+8. **Ship 6c-3 (keyframes + visual)** *after* Phase 7's embed lane exists, as keyframe-OCR + image-embedding together (full coverage), with `assets` storage decided as **Phase 7b**. *(after/with Phase 7)*
+9. **Raise the Node floor to 22.5** to kill the recurring version error. *(independent)*
+10. **Defer the CodeGraph→WitsOS naming pass** to after Phase 7. *(cosmetic)*
+
+---
+
+## Verification protocol for this design (when 6c is later built)
+
+Per PLAN.md §8 + ConRADL validation methodology:
+1. **Suite green** — `pnpm test` (esp. `extraction.test.ts`, `audio-stt.test.ts`, installer contract suite).
+2. **Node-count parity** — re-index this repo before/after; `codegraph_status` code node/edge totals unchanged.
+3. **New-type smoke** — fixture `.mp4` (with sidecar `.srt`) → `witsos index` → confirm `document`+`section` nodes appear → `witsos query <caption phrase>` finds the chunk with timing metadata.
+4. **Degradation matrix** — no ffmpeg / no sherpa / no subtitle / unsupported codec each → document-only, never `isError`.
+5. **Probe scripts** — `scripts/agent-eval/probe-*.mjs` against built `dist/`; code-flow explore still connects end-to-end (no media pollution).
+6. **Install-size guard** — `pnpm pack` size flat; media deps remain optional packages.
+7. **Cross-platform** — Docker Linux (`--init`) + Parallels Windows VM ffmpeg path resolution.

@@ -18,7 +18,7 @@ import {
 } from '../types';
 import { QueryBuilder } from '../db/queries';
 import { extractFromSource } from './tree-sitter';
-import { detectLanguage, isSourceFile, isLanguageSupported, isFileLevelOnlyLanguage, isAsyncExtractorLanguage, initGrammars, loadGrammarsForLanguages } from './grammars';
+import { detectLanguage, isSourceFile, isLanguageSupported, isFileLevelOnlyLanguage, initGrammars, loadGrammarsForLanguages } from './grammars';
 import { loadExtensionOverrides, loadIncludeIgnoredPatterns, loadExcludePatterns, loadOcrConfig, loadSttConfig } from '../project-config';
 import { isWitsOSDataDir } from '../directory';
 import { logDebug, logWarn } from '../errors';
@@ -27,6 +27,8 @@ import ignore, { Ignore } from 'ignore';
 import { detectFrameworks } from '../resolution/frameworks';
 import type { ResolutionContext } from '../resolution/types';
 import { JobPool } from '../workers/job-pool';
+import { resolveMediaExtractor } from './media-extractor-registry';
+import { registerDefaultMediaExtractors } from './media-extractors-register';
 
 /**
  * Number of files to read in parallel during indexing.
@@ -1000,6 +1002,8 @@ export class ExtractionOrchestrator {
   constructor(rootDir: string, queries: QueryBuilder) {
     this.rootDir = rootDir;
     this.queries = queries;
+    // Register media extractors (PDF, image, audio, video) on first instantiation
+    registerDefaultMediaExtractors();
   }
 
   /**
@@ -1309,18 +1313,17 @@ export class ExtractionOrchestrator {
           continue;
         }
 
-        // Async extractors (PDF text layer, image OCR, STT) run in their own
-        // lane and re-read the file from disk — they bypass MAX_FILE_SIZE.
         const detectedLanguage = detectLanguage(filePath, content, overrides);
+        const fileExtension = filePath.substring(filePath.lastIndexOf('.')).toLowerCase() || '';
+        const mediaExtractor = resolveMediaExtractor(detectedLanguage, fileExtension);
 
-        // Honour MAX_FILE_SIZE. Without this check, vendored generated
-        // headers, minified bundles, and other multi-MB files get indexed,
-        // wasting WASM heap and the worker recycle budget on inputs with no
-        // useful symbols. The single-file extractFile path already enforces
-        // this; the bulk path used to silently skip the check.
-        // Async extractor languages (audio/image/pdf) are exempt: their workers
-        // re-read the binary from disk and enforce their own size limits.
-        if (stats.size > MAX_FILE_SIZE && !isAsyncExtractorLanguage(detectedLanguage)) {
+        // Async extractors (PDF text layer, image OCR, STT, video) run in their own
+        // lane and re-read the file from disk — they bypass MAX_FILE_SIZE.
+        // Honour MAX_FILE_SIZE for tree-sitter languages: without this check,
+        // vendored generated headers, minified bundles, and other multi-MB files
+        // get indexed, wasting WASM heap and the worker recycle budget on inputs
+        // with no useful symbols. Media extractors enforce their own size limits.
+        if (stats.size > MAX_FILE_SIZE && !mediaExtractor) {
           processed++;
           filesSkipped++;
           errors.push({
@@ -1332,33 +1335,40 @@ export class ExtractionOrchestrator {
           onProgress?.({ phase: 'parsing', current: processed, total });
           continue;
         }
-        if (isAsyncExtractorLanguage(detectedLanguage)) {
+        if (mediaExtractor) {
           processed++;
-          // Force re-extraction: binary files (image/pdf) have a stable content
-          // hash even when OCR config changes, so the hash-equality guard in
+          // Force re-extraction: binary files (image/pdf/video) have a stable
+          // content hash even when config changes, so the hash-equality guard in
           // storeExtractionResult would silently skip them. Delete the stale
           // record before extracting so storeExtractionResult always runs fresh.
           this.queries.deleteFile(filePath);
-          let asyncResult: ExtractionResult;
+          let asyncResult: ExtractionResult | null = null;
           try {
-            if (detectedLanguage === 'audio' && pool && pool.hasLane('stt')) {
-              sttFilesProcessed++;
-              const sttConfig = loadSttConfig(this.rootDir);
-              asyncResult = await pool.submit<object, ExtractionResult>(
-                'stt',
-                { type: 'stt', filePath, language: detectedLanguage, sttConfig, rootDir: this.rootDir },
-                { timeoutMs: 300_000 },
-              );
-            } else if ((detectedLanguage === 'image' || detectedLanguage === 'pdf') && pool && pool.hasLane('ocr')) {
-              ocrFilesProcessed++;
-              const ocrConfig = detectedLanguage === 'image' ? loadOcrConfig(this.rootDir) : undefined;
-              asyncResult = await pool.submit<object, ExtractionResult>(
-                'ocr',
-                { type: 'ocr', filePath, language: detectedLanguage, source: content, ocrConfig, rootDir: this.rootDir },
-                { timeoutMs: 120_000 },
-              );
-            } else {
+            const lane = mediaExtractor.lane;
+            // @ts-ignore lane is validated at runtime, but TS can't prove it's a literal JobKind value
+            if (!pool || !pool.hasLane(lane)) {
+              // Fallback: worker not available (tests or misconfiguration)
               asyncResult = await this.runAsyncExtractor(filePath, content, detectedLanguage);
+            } else {
+              // Track media processing by lane
+              if (lane === 'stt') sttFilesProcessed++;
+              else if (lane === 'ocr') ocrFilesProcessed++;
+
+              // Build worker payload based on language
+              const payload = this.buildMediaPayload(detectedLanguage, filePath, content);
+              if (!payload) {
+                // Unknown media type → fallback
+                asyncResult = await this.runAsyncExtractor(filePath, content, detectedLanguage);
+              } else {
+                const timeoutMs = lane === 'stt' ? 300_000 : 120_000;
+                // Lane is validated by pool.hasLane above; safe to cast (JobKind union grows with video/future lanes)
+                asyncResult = await pool.submit<Record<string, unknown>, ExtractionResult>(
+                  // @ts-ignore lane is validated at runtime, but TS can't prove it's a literal JobKind value
+                  lane,
+                  payload,
+                  { timeoutMs },
+                );
+              }
             }
           } catch (asyncErr) {
             filesErrored++;
@@ -1370,12 +1380,14 @@ export class ExtractionOrchestrator {
             });
             continue;
           }
-          if (asyncResult.nodes.length > 0 || asyncResult.errors.length === 0) {
+          if (asyncResult && (asyncResult.nodes.length > 0 || asyncResult.errors.length === 0)) {
             this.storeExtractionResult(filePath, content, detectedLanguage, stats, asyncResult);
           }
-          filesIndexed++;
-          totalNodes += asyncResult.nodes.length;
-          totalEdges += asyncResult.edges.length;
+          if (asyncResult) {
+            filesIndexed++;
+            totalNodes += asyncResult.nodes.length;
+            totalEdges += asyncResult.edges.length;
+          }
           onProgress?.({ phase: 'parsing', current: processed, total });
           continue;
         }
@@ -1713,11 +1725,13 @@ export class ExtractionOrchestrator {
     // route nodes / middleware / etc.
     const frameworkNames = this.ensureDetectedFrameworks();
 
-    // Async extractors (PDF text layer, image OCR) are handled on the main
-    // thread before entering the parse worker path. extractFromSource is sync;
-    // these types bypass it via their own async extract() method.
+    // Async extractors (PDF, image, audio, video) are handled on the main
+    // thread via runAsyncExtractor before entering the parse worker path.
+    // extractFromSource is sync; these types bypass it via their own async extract() method.
+    const fileExtension = relativePath.substring(relativePath.lastIndexOf('.')).toLowerCase() || '';
+    const mediaExtractor = resolveMediaExtractor(language, fileExtension);
     let result: ExtractionResult;
-    if (isAsyncExtractorLanguage(language)) {
+    if (mediaExtractor) {
       result = await this.runAsyncExtractor(relativePath, content, language);
     } else {
       result = extractFromSource(relativePath, content, language, frameworkNames);
@@ -1732,11 +1746,34 @@ export class ExtractionOrchestrator {
   }
 
   /**
-   * Run an async, binary extractor (PDF text layer, image OCR) on the main
+   * Build worker payload for a media extractor based on language.
+   * Returns null if the language is not supported by media extractors.
+   */
+  private buildMediaPayload(
+    language: Language,
+    filePath: string,
+    content: string
+  ): Record<string, unknown> | null {
+    if (language === 'audio') {
+      const sttConfig = loadSttConfig(this.rootDir);
+      return { type: 'stt', filePath, language, sttConfig, rootDir: this.rootDir };
+    }
+    if (language === 'image') {
+      const ocrConfig = loadOcrConfig(this.rootDir);
+      return { type: 'ocr', filePath, language, source: content, ocrConfig, rootDir: this.rootDir };
+    }
+    if (language === 'pdf') {
+      return { type: 'ocr', filePath, language, source: content, rootDir: this.rootDir };
+    }
+    // Video and future media types will add cases here as they're built
+    return null;
+  }
+
+  /**
+   * Run an async, binary extractor (PDF text layer, image OCR, video) on the main
    * thread — these re-read the file as bytes and use async JS libraries, so they
-   * bypass the WASM-tree-sitter parse worker. `isAsyncExtractorLanguage` gates
-   * which languages route here. Image OCR is constructed with the project's OCR
-   * config (opt-in); PDF has no config.
+   * bypass the WASM-tree-sitter parse worker. Fallback path when workers are unavailable.
+   * Image OCR is constructed with the project's OCR config (opt-in); PDF has no config.
    */
   private async runAsyncExtractor(
     filePath: string,

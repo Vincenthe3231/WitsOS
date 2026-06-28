@@ -48,10 +48,15 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface WorkerSlot {
+  worker: WorkerType;
+  jobCount: number;
+  inFlight: number; // Jobs awaiting response on this worker
+}
+
 interface LaneState {
   opts: Required<LaneOptions>;
-  worker: WorkerType | null;
-  jobCount: number;
+  workers: WorkerSlot[];
   pending: Map<number, Pending>;
   nextId: number;
 }

@@ -107,6 +107,7 @@ export const LANGUAGES = [
   'pdf',
   'image',
   'audio',
+  'video',
   'unknown',
 ] as const;
 

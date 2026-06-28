@@ -10,7 +10,7 @@ import * as path from 'path';
 import { Parser, Language as WasmLanguage } from 'web-tree-sitter';
 import { Language } from '../types';
 
-export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'plaintext' | 'markdown' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'image' | 'audio' | 'unknown'>;
+export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'plaintext' | 'markdown' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'image' | 'audio' | 'video' | 'unknown'>;
 
 /**
  * WASM filename map — maps each language to its .wasm grammar file
@@ -150,6 +150,18 @@ export const EXTENSION_MAP: Record<string, Language> = {
   '.ogg': 'audio',
   '.opus': 'audio',
   '.wma': 'audio',
+  // Video (Phase 6c). Indexed as metadata, subtitles, STT, and keyframes when
+  // extractors are enabled; otherwise yields a document node only.
+  '.mp4': 'video',
+  '.mkv': 'video',
+  '.webm': 'video',
+  '.mov': 'video',
+  '.avi': 'video',
+  '.flv': 'video',
+  '.wmv': 'video',
+  '.m4v': 'video',
+  '.mpg': 'video',
+  '.mpeg': 'video',
 };
 
 /**
@@ -370,16 +382,6 @@ export function isLanguageSupported(language: Language): boolean {
 }
 
 /**
- * Languages whose extractor is async + binary (re-reads file bytes itself) and
- * therefore must run on the main thread, bypassing the WASM-tree-sitter parse
- * worker. The orchestrator routes these through `runAsyncExtractor` instead of
- * `requestParse`. PDF (text layer, Phase 4) and image (OCR, Phase 5) qualify.
- */
-export function isAsyncExtractorLanguage(language: Language): boolean {
-  return language === 'pdf' || language === 'image' || language === 'audio';
-}
-
-/**
  * Check if a grammar has been loaded and is ready for parsing.
  */
 export function isGrammarLoaded(language: Language): boolean {
@@ -493,6 +495,7 @@ export function getLanguageDisplayName(language: Language): string {
     pdf: 'PDF Document',
     image: 'Image (OCR)',
     audio: 'Audio (STT)',
+    video: 'Video (Phase 6c)',
     unknown: 'Unknown',
   };
   return names[language] || language;

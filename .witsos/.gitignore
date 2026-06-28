@@ -6,7 +6,7 @@
 *.db-wal
 *.db-shm
 
-# Cache
+# Cache 
 cache/
 
 # Logs

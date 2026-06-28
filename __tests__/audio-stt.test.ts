@@ -194,8 +194,10 @@ describe('AudioExtractor — EXTENSION_MAP registration', () => {
     }
   });
 
-  it('audio is classified as async extractor language', async () => {
-    const { isAsyncExtractorLanguage } = await import('../src/extraction/grammars');
-    expect(isAsyncExtractorLanguage('audio')).toBe(true);
+  it('audio is registered as a media extractor', async () => {
+    const { resolveMediaExtractor } = await import('../src/extraction/media-extractor-registry');
+    const extractor = resolveMediaExtractor('audio', '.mp3');
+    expect(extractor).toBeDefined();
+    expect(extractor?.lane).toBe('stt');
   });
 });

@@ -16,7 +16,8 @@ import * as path from 'path';
 
 import { ImageExtractor } from '../src/extraction/languages/image-extractor';
 import { __setOcrBackendForTests, type OcrBackend } from '../src/extraction/ocr/backend';
-import { detectLanguage, isSourceFile, isLanguageSupported, isAsyncExtractorLanguage } from '../src/extraction/grammars';
+import { detectLanguage, isSourceFile, isLanguageSupported } from '../src/extraction/grammars';
+import { resolveMediaExtractor } from '../src/extraction/media-extractor-registry';
 import type { OcrConfig } from '../src/project-config';
 
 const ENABLED: OcrConfig = { enabled: true, languages: ['en'], maxImageMP: 25, minConfidence: 0.5 };
@@ -54,9 +55,11 @@ describe('image classification', () => {
     }
   });
 
-  it('treats image as a supported, async-extractor language', () => {
+  it('treats image as a supported language with a media extractor', () => {
     expect(isLanguageSupported('image')).toBe(true);
-    expect(isAsyncExtractorLanguage('image')).toBe(true);
+    const extractor = resolveMediaExtractor('image', '.png');
+    expect(extractor).toBeDefined();
+    expect(extractor?.lane).toBe('ocr');
   });
 
   it('does not classify .gif as image', () => {
