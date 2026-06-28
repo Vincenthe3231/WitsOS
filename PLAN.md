@@ -1,221 +1,162 @@
-# CodeGraph → Universal Knowledge Indexing Engine — CTO Strategy & Architecture Report
+# WitsOS → Universal Knowledge Indexing Engine — Architecture & Roadmap
 
 ## Context
 
-You asked me to evaluate transforming CodeGraph from a source-code indexer into a universal
-document/knowledge indexing engine (Markdown, PDF, Office, images/OCR, audio/video/STT, embeddings,
-cross-document search), and to decide between **(A)** extending the existing implementation vs **(B)**
-rewriting the engine in Rust.
+WitsOS is a fork of CodeGraph — a local-first code intelligence library + CLI + MCP server. Goal: extend
+it into a **universal document/knowledge indexing engine** (Markdown, PDF, Office, images/OCR,
+audio/video/STT, embeddings, cross-document search) while keeping the code-indexing path byte-stable.
 
-**The premise had a factual error that changes the entire question, and I verified it against the
-CodeGraph index before writing anything.** Your brief repeatedly frames the existing engine as **C++**.
-It is not. Evidence (`codegraph_status`): the repo is **264 TypeScript files, 26 JavaScript, 2 YAML —
-zero C++, zero Rust, zero native code.** So the real decision is **TypeScript → Rust**, not C++ → Rust.
-That inversion matters: the usual "escape C++ pain" motivation for Rust does not apply. The incumbent is
-a memory-safe, GC'd, high-velocity TS codebase whose only native-ish dependency is tree-sitter compiled
-to **WASM** and SQLite via Node's built-in `node:sqlite` — *already* a zero-native-build install.
+**Stack is TypeScript end-to-end** (264 TS files, 26 JS, 2 YAML — zero C++, zero Rust, zero native code).
+Only native-ish dependencies: tree-sitter compiled to WASM and SQLite via Node's built-in `node:sqlite`.
+Zero-native-build install is a headline feature — every phase must preserve it, or gate behind opt-in.
 
-Your three decisions (confirmed): **stay TS, Rust only if a hot-path is later proven** · **phase
-embeddings in after document ingestion, and also support .txt/.docx/.xlsx/.csv** · **refactor the
-architecture first, then add types.** This plan is built around those.
+**Three confirmed decisions:** stay TS (Rust sidecar only if a hot-path is proven) · phase embeddings
+in after document ingestion · refactor architecture first, then add types.
 
 ---
 
-## 1. Architecture Report (how the system works today)
-
-Layered pipeline, all wired by the `CodeGraph` class in [src/index.ts](src/index.ts) via
-`wireLayers()` ([src/index.ts:173](src/index.ts:173)):
+## 1. Architecture — current state
 
 ```
-files → ExtractionOrchestrator → DB (nodes/edges/files) → ReferenceResolver
-      → GraphQueryManager / GraphTraverser → ContextBuilder → (MCP / CLI)
+files → ExtractionOrchestrator (tree-sitter) → DB (nodes/edges/files/chunks)
+              ↓
+       ReferenceResolver (imports, name-matching, framework patterns)
+              ↓
+       GraphQueryManager / GraphTraverser (callers, callees, impact)
+              ↓
+       ContextBuilder (markdown/JSON for AI consumption)
 ```
 
-- **Ingest / indexing** — `ExtractionOrchestrator` ([src/extraction/index.ts:985](src/extraction/index.ts:985)).
-  `indexAll` scans files, reads each as **UTF-8** (`fsp.readFile(fullPath, 'utf-8')`), and parses in a
-  **single recycled `parse-worker` thread** (not a pool); results are stored on the **main thread**
-  because SQLite is not thread-safe. Worker is recycled every N parses to reclaim WASM linear memory,
-  with timeout/crash/retry handling. `sync()` ([src/extraction/index.ts:1867](src/extraction/index.ts:1867))
-  does filesystem reconcile via (size, mtime) pre-filter + content hash.
-- **Parser dispatch** — `extractFromSource` ([src/extraction/tree-sitter.ts:5609](src/extraction/tree-sitter.ts:5609))
-  is a **hard-coded if/else chain**: `svelte → SvelteExtractor`, `vue → VueExtractor`, `astro`, `liquid`,
-  `razor`, `xml → MyBatisExtractor`, `pascal+.dfm → DfmExtractor`, else `TreeSitterExtractor`. Language is
-  chosen by extension via `EXTENSION_MAP` ([src/extraction/grammars.ts:47](src/extraction/grammars.ts:47)).
-- **The universal contract already exists**: every extractor returns `ExtractionResult`
-  ([src/types.ts:243](src/types.ts:243)) = `{ nodes, edges, unresolvedReferences, errors, durationMs }`,
-  and tree-sitter languages plug in via the `LanguageExtractor` config interface
-  ([src/extraction/tree-sitter-types.ts](src/extraction/tree-sitter-types.ts)). This is the seam your
-  "every document type implements the same interface" vision needs — it is already here, just dispatched
-  rigidly.
-- **Storage** — [src/db/schema.sql](src/db/schema.sql): `nodes` (code-shaped: line/column, visibility,
-  is_async/static/abstract, return_type, decorators), `edges` (fixed `EdgeKind`), `files`,
-  `unresolved_refs`. **FTS5 (`nodes_fts`) indexes only `name, qualified_name, docstring, signature` — there
-  is no body/content column.** Symbol bodies are re-read from disk at query time, not stored.
-- **Search** — `searchNodes` ([src/db/queries.ts:775](src/db/queries.ts:775)) = FTS5 prefix → LIKE
-  substring → Levenshtein fuzzy → multi-signal scoring. **Purely lexical.**
-- **Graph / resolution / context** — `ReferenceResolver` (imports, name-matching, framework resolvers
-  under `src/resolution/frameworks/`), `GraphTraverser`/`GraphQueryManager`, `ContextBuilder`. Surfaced to
-  agents through the MCP server (`src/mcp/`, guidance in `server-instructions.ts`) and the commander CLI
-  ([src/bin/codegraph.ts](src/bin/codegraph.ts)).
+### Storage (post-Phase 2)
 
-### The five structural facts that decide the whole strategy
+- `nodes` — code-shaped: line/column, visibility, is_async/static/abstract, return_type, decorators
+- `edges` — fixed `EdgeKind`
+- `files` — file-level metadata
+- `chunks` — doc-oriented: body text, heading, chunk_index, char_start/end
+- `nodes_fts` — FTS5 over `name, qualified_name, docstring, signature` (code symbols)
+- `chunks_fts` — FTS5 over `heading, body` (prose/doc content) ← added Phase 1
 
-1. **The pipeline assumes UTF-8 text end-to-end.** `indexAll` reads `utf-8`; every extractor takes
-   `source: string`. PDF/image/audio/video are **binary** and do not fit `(filePath, source) →
-   ExtractionResult`. **There is no document-adapter / binary→text stage. This is the single biggest gap.**
-2. **Dispatch is a god-`if/else`, not a registry.** Adding a type today = editing
-   `extractFromSource` + `EXTENSION_MAP`. Does not scale to a plugin vision.
-3. **The schema and `NodeKind`/`EdgeKind` are code-shaped.** No `document`/`page`/`section`/`chunk`
-   kinds; no stored body; FTS has no prose/content field.
-4. **No embedding/vector subsystem exists.** `embedding` → 0 hits; `vector` → only a stray `VectorError`
-   class ([src/errors.ts:144](src/errors.ts:144)), effectively dead. "Semantic search" today is a misnomer
-   for lexical FTS.
-5. **Concurrency is one parse-worker, not a pool**, and the only heavy compute is WASM tree-sitter.
-   OCR/STT/transcode are far heavier and out-of-band.
+### Concurrency model (current)
+
+- File I/O: `Promise.all` over `FILE_IO_BATCH_SIZE` files (parallel reads)
+- Parsing: **single recycled parse-worker thread** (WASM tree-sitter; not thread-safe)
+- DB writes: **main thread only** (`node:sqlite` not thread-safe)
 
 ---
 
-## 2. Rewrite Assessment — recommendation: **stay TypeScript; do NOT rewrite in Rust**
+## 2. Target Pipeline (Phase 7+)
 
-Evidence-driven verdict, optimizing for sustainability, contributor velocity, and migration risk:
+All files flow through two-stage async pipeline:
 
-- **The premise that motivates Rust (escaping C++) is false** — there is no C++. The incumbent is already
-  memory-safe and GC'd.
-- **The current hot path is WASM tree-sitter parsing**, which a Rust orchestrator would *still call as
-  WASM/native* — rewriting the orchestration glue around it buys little throughput.
-- **The genuinely heavy future work is OCR, speech-to-text, and transcode** (PaddleOCR, Whisper, FFmpeg).
-  The right pattern for all three is **call the existing native tool/service out-of-process**, not
-  reimplement it in Rust. So Rust would orchestrate sidecars — exactly what Node already does well.
-- **A rewrite throws away** the mature differentiators: ~40 framework resolvers, dynamic-dispatch
-  synthesizers, multi-agent installer, MCP tuning, and a large test suite (~100+ files). CLAUDE.md's own
-  law — *"partial coverage is WORSE than none"* — applies doubly to a rewrite: a half-ported engine
-  regresses code indexing, the current paying use case.
-- **Where Rust could legitimately help later**: a CPU/GPU-bound batch stage (embedding inference, OCR,
-  hashing millions of chunks). The correct vehicle is a **narrow, optional sidecar** (NAPI-RS addon or a
-  standalone binary spoken to over a socket) for a **profiled, proven** bottleneck — never a core rewrite.
-- **Algorithmic/architectural wins dominate raw-language wins** for real-world indexing throughput here
-  (worker pool, batched transactions, mtime skip already exists). Reach for those first.
+```
+files
+  │
+  ▼
+FTS5 lexical pre-index  ← immediate; metadata + extractable text strings
+  │
+  ▼
+Classifier (async, per-file)
+  │
+  ├── code   → existing tree-sitter extractor (already classified by EXTENSION_MAP)
+  │
+  ├── docs   → embedder (text chunks from chunks_fts already exist)
+  │
+  ├── image  → PaddleOCR sidecar → text → embedder
+  │
+  └── other  → Handler + specialized indexing model
+                   │
+                   ▼
+              SQLite DB (writes serialize to main thread — WAL for concurrent reads)
+```
 
-**Decision matrix:** stay C++ → N/A (no C++). Full rewrite → **rejected** (regression + velocity + ecosystem
-loss). Rust core alongside → premature. **Rust sidecar for a proven hot-path → kept on the shelf, not now.**
-
----
-
-## 3. Migration Strategy (architecture-first, incremental — no big bang)
-
-Each phase ships independently, keeps the existing code-indexing path byte-stable, and is validated before
-the next. Phases 0–1 are the refactor you chose to do first.
-
-- **Phase 0 — Extractor registry (pure refactor, zero behavior change).** Replace the `extractFromSource`
-  if/else with an `ExtractorRegistry` mapping `language → factory`. Each existing standalone extractor
-  (Svelte/Vue/Astro/Liquid/Razor/MyBatis/DFM) self-registers. Net behavior identical; verified by the
-  existing suite + stable node count on re-index. *This is the highest-leverage change and benefits the
-  C++-free present immediately.*
-- **Phase 1 — Binary-safe `SourceAdapter` stage + document schema.** Insert an adapter stage
-  *before* extraction: `(filePath, bytes) → { text, metadata }`. Code path = identity adapter (UTF-8),
-  so nothing regresses. Extend storage with doc-oriented kinds (`document`, `section`, `chunk`) and a
-  **new FTS table over chunk body/prose** (the current `nodes_fts` deliberately omits body). Add a
-  semantic **chunker** + **metadata extractor** as adapter outputs.
-- **Phase 2 — Text documents: `.txt`, `.md`, `.csv`.** Pure text, **no native dependency** — validates the
-  whole document path end-to-end on the cheapest inputs. Markdown gets heading→section→chunk structure +
-  link edges (cross-doc graph seed).
-- **Phase 3 — Office: `.docx`, `.xlsx`, `.pptx`.** These are ZIP+XML; extract text with **pure-JS**
-  libraries (no native build) — keeps the zero-native-install promise intact.
-- **Phase 4 — PDF.** Text-layer extraction via a JS PDF lib first; scanned/image PDFs fall through to OCR
-  in Phase 5.
-- **Phase 5 — OCR (images + scanned PDF).** First true heavy native tool. **Optional out-of-process
-  sidecar** (PaddleOCR), gated behind an opt-in install so the base package stays lean.
-- **Phase 6 — Audio / Video → STT.** FFmpeg (demux/transcode) + Whisper (transcribe) as sidecars; same
-  optional-plugin model. Add a **parse-worker pool** here if not already done — these are long jobs.
-- **Phase 7 — Embeddings + vector store (semantic layer).** Now that chunk text flows, add embedding
-  generation + a vector index (sqlite-vec/extension or sidecar). Local-first model runtime or pluggable
-  API. *This is the phase you chose to defer to here — correct, it has the most net-new surface.*
-- **Phase 8 — Cross-document graph + unified search.** Entity/citation/link edges across all types; a
-  single search blending lexical FTS + vector + graph.
+**Key invariants:**
+- FTS5 pre-index is synchronous and completes first → users can search immediately
+- Classifier and all specialist handlers are async → code/docs/image/other all parallel, no head-of-line blocking
+- DB writes always serialize to main thread regardless of how many parallel workers are running
+- Embedding is post-processing — does not block `witsos index` completion
+- `witsos status` must surface two progress dimensions: FTS done % / embeddings done %
 
 ---
 
-## 4. Feature Roadmap (priority order, adjusted from your list)
+## 3. Phase Status
 
-Reordered to **front-load cheap, pure-JS, no-native-dependency types** so the architecture is proven
-before heavy tooling is pulled in (cheapest validation first, biggest install/maintenance cost last):
-
-1. **Extractor registry refactor** (Phase 0)
-2. **SourceAdapter + document schema/chunker** (Phase 1)
-3. **Markdown + .txt + .csv** (Phase 2)
-4. **Office .docx/.xlsx/.pptx** (Phase 3)
-5. **PDF (text layer)** (Phase 4)
-6. **OCR / images** (Phase 5)
-7. **Audio** (Phase 6a)
-8. **Video** (Phase 6b)
-9. **Embeddings + vector search** (Phase 7)
-10. **Cross-document graph + unified search** (Phase 8)
-
-Rationale for moving Office/CSV ahead of OCR/audio: they're high-value for "document intelligence," need
-**no native binaries**, and exercise the binary→text adapter (ZIP/XML) without the install burden of
-PaddleOCR/Whisper/FFmpeg.
+| Phase | Description | Status |
+|-------|------------|--------|
+| 0 | ExtractorRegistry — replace `extractFromSource` if/else with registry | ✅ done |
+| 1 | Binary-safe `SourceAdapter` + `chunks` table + `chunks_fts` + text chunker | ✅ done |
+| 2 | Text docs: `.txt`, `.md`, `.csv` extractors + chunk storage wired in | ✅ done |
+| 3 | Office: `.docx`, `.xlsx`, `.pptx` — ZIP+XML, pure-JS, no native build | ✅ done |
+| 4 | PDF — text-layer extraction via JS PDF lib; scanned falls to Phase 5 | ✅ done |
+| 5 | OCR — images + scanned PDF via PaddleOCR sidecar (opt-in) | ⬜ |
+| 6 | Audio / Video → STT via FFmpeg + Whisper sidecars; add worker pool | ⬜ |
+| 7 | Embeddings + vector store — sqlite-vec or sidecar; local-first model | ⬜ |
+| 8 | Cross-document graph + unified search (FTS + vector + graph blended) | ⬜ |
 
 ---
 
-## 5. Refactoring Opportunities (benefit the present codebase regardless of the vision)
+## 4. Feature Roadmap (priority order)
 
-- **`ExtractorRegistry`** replacing the `extractFromSource` if/else
-  ([src/extraction/tree-sitter.ts:5609](src/extraction/tree-sitter.ts:5609)) — decouples type-add from a
-  god-function; makes the "plugin" model real.
-- **`SourceAdapter` seam** before extraction — the missing binary→text layer; identity adapter for code.
-- **Parse-worker pool** (size ≈ CPU count) instead of the single recycled worker in `indexAll`
-  ([src/extraction/index.ts:985](src/extraction/index.ts:985)) — throughput win now, prerequisite for heavy
-  doc adapters later.
-- **Batched SQLite writes** — confirm `storeExtractionResult` wraps per-file inserts in a transaction;
-  main-thread serial writes are a known bottleneck on large repos.
-- **Keep `ExtractionResult` as the universal interface** — it already is the right abstraction; do not
-  invent a parallel one.
-- **Kind-aware MCP tools** — `callers`/`callees`/`impact` are meaningless on a `chunk`; gate or branch
-  tool behavior by node kind so doc nodes don't pollute code-flow answers
-  (`src/mcp/tools.ts`, `server-instructions.ts`).
+Cheapest-first: front-load pure-JS/no-native types to validate the document path before heavy tooling.
+
+1. **Office .docx/.xlsx/.pptx** (Phase 3) — ZIP+XML, pure JS, no sidecar
+2. **PDF text layer** (Phase 4) — JS PDF lib, covers most PDFs
+3. **OCR / images** (Phase 5) — PaddleOCR opt-in sidecar
+4. **Audio** (Phase 6a) — FFmpeg + Whisper opt-in
+5. **Video** (Phase 6b) — same sidecar model
+6. **Embeddings + vector search** (Phase 7) — requires chunks to exist (done)
+7. **Cross-document graph + unified search** (Phase 8)
 
 ---
 
-## 6. Risks
+## 5. Prerequisite Work for Phase 7
 
-- **Maintenance / distribution (highest):** today's headline feature is a **zero-native-build npm install**
-  (tree-sitter WASM + `node:sqlite`). OCR/STT/FFmpeg are heavy native deps that break that promise. Mitigation:
-  **optional, opt-in sidecar plugins**, never bundled into the base package.
-- **Partial-coverage debt:** CLAUDE.md's own principle — a half-built doc path that returns junk teaches
-  agents (and users) to abandon the tool. **Ship each document type fully or not at all.**
-- **Schema/kind coupling:** `NodeKind`/`EdgeKind` and the MCP tool semantics assume code. Doc nodes risk
-  polluting code-centric tools; needs kind-aware gating (see §5).
-- **Compatibility / regression:** CodeGraph is a published npm package with live code-indexing users. Every
-  phase must keep code indexing byte-stable (re-index node-count parity is the canary).
-- **Embeddings — privacy & cost:** a vector layer needs a model runtime; an API breaks the **local-first**
-  promise, a local runtime adds size/compute. Decide before Phase 7.
-- **Migration risk is LOW if you stay TS** and HIGH the moment a Rust rewrite is attempted — the single
-  biggest risk lever is the rewrite itself, which this plan declines.
+Before embeddings land, these gaps must close:
+
+| Gap | Problem | Fix |
+|-----|---------|-----|
+| Single parse-worker | OCR/STT/embedding are 10–100× heavier than tree-sitter | Worker pool (≈ CPU count) |
+| No `embedding_status` column | Users can't tell if semantic search is ready | Add to `files` table |
+| `witsos status` shows one metric | Embeddings complete asynchronously | Surface FTS% and embedding% separately |
+| Classifier is implicit | Extension-based dispatch fine for code, ambiguous for other MIME | Explicit classifier for non-code types only |
+
+Worker pool is prerequisite for Phase 6 too — add it there, reuse in Phase 7.
 
 ---
 
-## Verification
+## 6. Refactoring Opportunities (ongoing)
 
-The Phase 0/1 refactors are the only near-term code changes; validate them by:
-
-1. **Existing suite stays green** — `pnpm test`, especially `__tests__/extraction.test.ts`,
-   `frameworks.test.ts`, `frameworks-integration.test.ts`, and the installer contract suite. No code-path
-   regression is the bar.
-2. **Node-count parity** — re-index this repo before/after the registry refactor; `codegraph_status` total
-   nodes/edges must be unchanged (the registry is behavior-preserving).
-3. **New-type smoke** — add a `.txt`/`.md` fixture under a temp project, `codegraph index`, confirm a
-   `document`/`chunk` node appears and `codegraph_search` finds prose from it (Phase 2).
-4. **Probe scripts** — reuse `scripts/agent-eval/probe-*.mjs` against the built `dist/` to confirm explore
-   still connects code flows end-to-end after the refactor.
-5. **Install-size guard** — base `pnpm pack` size must not grow from heavy deps; OCR/STT land as separate
-   optional packages.
+- **Parse-worker pool** (size ≈ CPU count) instead of single recycled worker — throughput win, prerequisite for heavy doc adapters
+- **Batched SQLite writes** — confirm `storeExtractionResult` wraps per-file inserts in a transaction; serial main-thread writes bottleneck on large repos
+- **Kind-aware MCP tools** — `callers`/`callees`/`impact` meaningless on `chunk`; gate by node kind so doc nodes don't pollute code-flow answers (`src/mcp/tools.ts`, `server-instructions.ts`)
+- **`chunks_fts` exposed in search** — `searchNodes` currently queries only `nodes_fts`; add a parallel `searchChunks` path and unify results
 
 ---
 
-### Bottom line
+## 7. Risks
 
-No C++ exists — the Rust question dissolves. **Stay TypeScript.** The work that unlocks your universal-engine
-vision is **architectural, not language**: a binary-safe `SourceAdapter` stage and an `ExtractorRegistry`,
-then doc-shaped storage + a prose FTS table, then types cheapest-first, with embeddings and heavy OCR/STT as
-later, optional, sidecar-isolated phases. Rust stays on the shelf for a single proven hot-path, never a core
-rewrite.
+- **Distribution / maintenance (highest):** zero-native-build is a headline promise. OCR/STT/FFmpeg break it. Mitigation: optional opt-in sidecar plugins, never bundled.
+- **Partial-coverage debt:** CLAUDE.md principle — half-built doc path that returns junk teaches agents to abandon the tool. Ship each type fully or not at all.
+- **Schema/kind coupling:** `NodeKind`/`EdgeKind` and MCP tool semantics assume code. Doc nodes need kind-aware gating before they pollute code-flow answers.
+- **Embeddings — privacy & cost:** vector layer needs model runtime; an API breaks local-first promise; local runtime adds size/compute. Decide model strategy before Phase 7.
+- **SQLite write contention:** parallel workers must never write directly to DB. All results queue to main thread for serialized writes. Already enforced; must not regress.
+- **Regression canary:** re-index node-count parity before/after every phase. `witsos status` total nodes/edges must be unchanged for code files.
+
+---
+
+## 8. Verification Protocol (per phase)
+
+1. **Suite stays green** — `pnpm test`, especially `extraction.test.ts`, `frameworks-integration.test.ts`, installer contract suite
+2. **Node-count parity** — re-index repo before/after; `codegraph_status` total nodes/edges unchanged for code files
+3. **New-type smoke** — fixture file → `witsos index` → confirm `chunk` node appears → `witsos query` finds prose
+4. **Probe scripts** — `scripts/agent-eval/probe-*.mjs` against built `dist/`; explore still connects code flows end-to-end
+5. **Install-size guard** — `pnpm pack` size must not grow from heavy deps; OCR/STT land as separate optional packages
+
+---
+
+## Bottom Line
+
+Phases 0–4 complete. Architecture refactored, text document pipeline live, Office formats indexed, PDF text-layer indexed via pdf-parse (pure JS, no native build).
+
+Next: Phase 5 (OCR — images + scanned PDF via PaddleOCR opt-in sidecar).
+
+Rust stays on shelf. Worker pool is the next architectural prerequisite — add in Phase 6, reuse in Phase 7.

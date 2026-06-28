@@ -272,6 +272,18 @@ Once `package.json` is at the target version on `main`, trigger
 **Do not run `npm publish`, `git push`, or `git tag` yourself** — these are
 publish actions on shared state. Write the files, hand the user the commands.
 
+## Codebase exploration — use WitsOS tools first
+
+**Always use the WitsOS MCP tools (`codegraph_explore`, `codegraph_search`, `codegraph_node`, `codegraph_callers`, `codegraph_callees`, `codegraph_impact`) to understand the codebase before reaching for Grep, Glob, or Read.** This repo dogfoods its own product — the index is live, sub-millisecond, and far cheaper than a grep loop.
+
+Rule of thumb:
+- "Where is X defined / what does X do?" → `codegraph_explore` with the symbol name. One call often returns the full source and caller/callee trail.
+- "What calls this?" / "What breaks if I change this?" → `codegraph_callers` / `codegraph_impact`.
+- "Find a symbol by name" → `codegraph_search`.
+- Only fall back to Read/Grep when codegraph's answer is insufficient (missing coverage, un-indexed file, etc.) — and note *why* the fallback was needed.
+
+Never open a grep/glob/read loop to explore structure when codegraph is available. That defeats the purpose of the tool and wastes context.
+
 ## House rules
 
 - The `0.7.x` line is in active multi-agent rollout. Any change to `src/installer/` (especially `targets/`) needs corresponding test coverage and a CHANGELOG entry — installer regressions break every new install silently.

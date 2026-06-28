@@ -31,6 +31,10 @@ import { MyBatisExtractor } from './mybatis-extractor';
 import { TxtExtractor } from './languages/txt-extractor';
 import { MdExtractor } from './languages/md-extractor';
 import { CsvExtractor } from './languages/csv-extractor';
+import { DocxExtractor } from './languages/docx-extractor';
+import { XlsxExtractor } from './languages/xlsx-extractor';
+import { PptxExtractor } from './languages/pptx-extractor';
+import { PdfExtractor } from './languages/pdf-extractor';
 import {
   registerExtractor,
   resolveExtractor,
@@ -5637,6 +5641,11 @@ registerExtractor({ name: 'file-level-only', match: ({ language }) => isFileLeve
 registerExtractor({ name: 'plaintext', match: ({ language }) => language === 'plaintext', create: (f, s) => new TxtExtractor(f, s) });
 registerExtractor({ name: 'markdown', match: ({ language }) => language === 'markdown', create: (f, s) => new MdExtractor(f, s) });
 registerExtractor({ name: 'csv', match: ({ language }) => language === 'csv', create: (f, s) => new CsvExtractor(f, s) });
+// Office document types (Phase 3). Binary files — extractors re-read from disk.
+registerExtractor({ name: 'docx', match: ({ language }) => language === 'docx', create: (f, s) => new DocxExtractor(f, s) });
+registerExtractor({ name: 'xlsx', match: ({ language }) => language === 'xlsx', create: (f, s) => new XlsxExtractor(f, s) });
+registerExtractor({ name: 'pptx', match: ({ language }) => language === 'pptx', create: (f, s) => new PptxExtractor(f, s) });
+registerExtractor({ name: 'pdf', match: ({ language }) => language === 'pdf', create: (f, s) => new PdfExtractor(f, s) });
 // Delphi/FireMonkey form files (.dfm/.fmx) — checked AFTER file-level-only to
 // preserve the original chain order.
 registerExtractor({ name: 'pascal-form', match: ({ language, fileExtension }) => language === 'pascal' && (fileExtension === '.dfm' || fileExtension === '.fmx'), create: (f, s) => new DfmExtractor(f, s) });
@@ -5663,7 +5672,9 @@ export function extractFromSource(
   const extractor: StandaloneExtractor = registration
     ? registration.create(filePath, source)
     : new TreeSitterExtractor(filePath, source, detectedLanguage);
-  const result: ExtractionResult = extractor.extract();
+  // Note: extractor.extract() may return a Promise for async extractors (e.g. PDF).
+  // The orchestrator handles async extractors before calling extractFromSource.
+  const result: ExtractionResult = extractor.extract() as ExtractionResult;
 
   // Framework-specific extraction (routes, middleware, etc.)
   if (frameworkNames && frameworkNames.length > 0) {

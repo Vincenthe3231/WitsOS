@@ -21,7 +21,7 @@ import type { ExtractionResult, Language } from '../types';
 
 /** Anything the dispatch can drive: produce an ExtractionResult for one file. */
 export interface StandaloneExtractor {
-  extract(): ExtractionResult;
+  extract(): ExtractionResult | Promise<ExtractionResult>;
 }
 
 /** Inputs a registration matches against. */

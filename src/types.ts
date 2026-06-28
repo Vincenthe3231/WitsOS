@@ -101,6 +101,10 @@ export const LANGUAGES = [
   'plaintext',
   'markdown',
   'csv',
+  'docx',
+  'xlsx',
+  'pptx',
+  'pdf',
   'unknown',
 ] as const;
 

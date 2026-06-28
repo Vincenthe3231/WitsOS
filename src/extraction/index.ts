@@ -1394,6 +1394,35 @@ export class ExtractionOrchestrator {
           continue;
         }
 
+        // Async extractors (PDF) run on the main thread — they bypass the parse
+        // worker because they re-read the file as binary and use async JS libs.
+        const detectedLanguage = detectLanguage(filePath, content, overrides);
+        if (detectedLanguage === 'pdf') {
+          processed++;
+          let pdfResult: ExtractionResult;
+          try {
+            const { PdfExtractor } = await import('./languages/pdf-extractor');
+            pdfResult = await new PdfExtractor(filePath, content).extract() as ExtractionResult;
+          } catch (pdfErr) {
+            filesErrored++;
+            errors.push({
+              message: pdfErr instanceof Error ? pdfErr.message : String(pdfErr),
+              filePath,
+              severity: 'error',
+              code: 'parse_error',
+            });
+            continue;
+          }
+          if (pdfResult.nodes.length > 0 || pdfResult.errors.length === 0) {
+            this.storeExtractionResult(filePath, content, detectedLanguage, stats, pdfResult);
+          }
+          filesIndexed++;
+          totalNodes += pdfResult.nodes.length;
+          totalEdges += pdfResult.edges.length;
+          onProgress?.({ phase: 'parsing', current: processed, total });
+          continue;
+        }
+
         // Parse in worker thread (main thread stays unblocked).
         // Wrapped in try/catch to handle worker timeouts and crashes gracefully.
         let result: ExtractionResult;
@@ -1727,7 +1756,17 @@ export class ExtractionOrchestrator {
     // otherwise detect on the spot so single-file re-index paths still emit
     // route nodes / middleware / etc.
     const frameworkNames = this.ensureDetectedFrameworks();
-    const result = extractFromSource(relativePath, content, language, frameworkNames);
+
+    // Async extractors (PDF and future binary formats) are handled on the main
+    // thread before entering the parse worker path. extractFromSource is sync;
+    // these types bypass it via their own async extract() method.
+    let result: ExtractionResult;
+    if (language === 'pdf') {
+      const { PdfExtractor } = await import('./languages/pdf-extractor');
+      result = await new PdfExtractor(relativePath, content).extract() as ExtractionResult;
+    } else {
+      result = extractFromSource(relativePath, content, language, frameworkNames);
+    }
 
     // Store in database
     if (result.nodes.length > 0 || result.errors.length === 0) {
