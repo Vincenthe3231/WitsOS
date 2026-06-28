@@ -531,6 +531,24 @@ program
       printIndexResult(clack, result, projectPath);
       await recordIndexTelemetry(cg, result);
 
+      // Scaffold WitsOS.json with all available options if it doesn't exist yet.
+      try {
+        const { scaffoldProjectConfig } = await import('../project-config');
+        scaffoldProjectConfig(projectPath);
+      } catch { /* non-fatal */ }
+
+      // Interactive opt-in for STT/OCR: prompt when eligible files found and
+      // capability is unset. Never prompts in non-TTY / MCP / --no-prompt.
+      try {
+        const { maybePromptCapabilities } = await import('../extraction/capability-prompt');
+        const { loadParsedCapabilityStatus } = await import('../extraction/capability-status');
+        const status = await loadParsedCapabilityStatus(cg, projectPath);
+        await maybePromptCapabilities(status, {
+          rootDir: projectPath,
+          noPrompt: (options as any).noPrompt,
+        });
+      } catch { /* non-fatal */ }
+
       try {
         const { offerWatchFallback } = await import('../installer');
         await offerWatchFallback(clack, projectPath);
@@ -679,12 +697,55 @@ program
         printIndexResult(clack, result, projectPath);
         await recordIndexTelemetry(cg, result);
 
+        // Scaffold WitsOS.json with all available options if it doesn't exist yet.
+        try {
+          const { scaffoldProjectConfig } = await import('../project-config');
+          scaffoldProjectConfig(projectPath);
+        } catch { /* non-fatal */ }
+
         if (!result.success) {
           process.exit(1);
         }
 
         clack.outro('Done');
-        cg.destroy();
+
+        // Auto-watch: after indexing, start watching for file changes and sync automatically
+        clack.intro('Watching for file changes...');
+        clack.log.info('Auto-syncing on file changes. Press Ctrl-C to stop.');
+
+        const watchStarted = cg.watch({
+          onSyncComplete: (syncResult) => {
+            const totalChanges = syncResult.filesChanged;
+            if (totalChanges > 0) {
+              clack.log.success(
+                `Synced ${formatNumber(totalChanges)} file${totalChanges === 1 ? '' : 's'} in ${formatDuration(syncResult.durationMs)}`
+              );
+            }
+          },
+          onSyncError: (err) => {
+            clack.log.error(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+          },
+          onDegraded: (reason) => {
+            clack.log.warn(`Watcher degraded: ${reason}`);
+          },
+        });
+
+        if (!watchStarted) {
+          clack.log.warn('File watching unavailable in this environment.');
+          cg.destroy();
+          return;
+        }
+
+        // Keep process alive until Ctrl-C
+        process.on('SIGINT', () => {
+          clack.outro('Stopped watching.');
+          cg.destroy();
+          process.exit(0);
+        });
+        process.on('SIGTERM', () => {
+          cg.destroy();
+          process.exit(0);
+        });
       } finally {
         supervision.stop();
       }
@@ -1023,29 +1084,49 @@ program
         return aGen - bGen;
       });
 
+      // Also search prose chunks (documents, transcripts, PDFs, etc.)
+      // Skip chunk search when --kind is set (it's a code-symbol filter).
+      const chunkResults = options.kind ? [] : cg.searchChunks(search, { limit });
+
       if (options.json) {
-        console.log(JSON.stringify(results, null, 2));
+        console.log(JSON.stringify({ symbols: results, chunks: chunkResults }, null, 2));
       } else {
-        if (results.length === 0) {
+        if (results.length === 0 && chunkResults.length === 0) {
           info(`No results found for "${search}"`);
         } else {
-          console.log(chalk.bold(`\nSearch Results for "${search}":\n`));
-
-          for (const result of results) {
-            const node = result.node;
-            const location = `${node.filePath}:${node.startLine}`;
-            const score = chalk.dim(`(${(result.score * 100).toFixed(0)}%)`);
-
-            console.log(
-              chalk.cyan(node.kind.padEnd(12)) +
-              chalk.white(node.name) +
-              ' ' + score
-            );
-            console.log(chalk.dim(`  ${location}`));
-            if (node.signature) {
-              console.log(chalk.dim(`  ${node.signature}`));
+          if (results.length > 0) {
+            console.log(chalk.bold(`\nSymbols matching "${search}":\n`));
+            for (const result of results) {
+              const node = result.node;
+              const location = `${node.filePath}:${node.startLine}`;
+              const score = chalk.dim(`(${(result.score * 100).toFixed(0)}%)`);
+              console.log(
+                chalk.cyan(node.kind.padEnd(12)) +
+                chalk.white(node.name) +
+                ' ' + score
+              );
+              console.log(chalk.dim(`  ${location}`));
+              if (node.signature) {
+                console.log(chalk.dim(`  ${node.signature}`));
+              }
+              console.log();
             }
-            console.log();
+          }
+
+          if (chunkResults.length > 0) {
+            console.log(chalk.bold(`\nDocument / transcript content matching "${search}":\n`));
+            for (const r of chunkResults) {
+              const { chunk } = r;
+              const meta = chunk.metadata as Record<string, unknown> | undefined;
+              const heading = meta?.heading ?? meta?.title ?? null;
+              const label = heading ? chalk.white(String(heading)) : chalk.dim('(no heading)');
+              console.log(chalk.green('chunk'.padEnd(12)) + label);
+              console.log(chalk.dim(`  ${chunk.filePath}  chunk #${chunk.chunkIndex}`));
+              // Show a short excerpt (first 120 chars)
+              const excerpt = chunk.body.replace(/\s+/g, ' ').trim().slice(0, 120);
+              console.log(chalk.dim(`  "${excerpt}${chunk.body.length > 120 ? '…' : ''}"`));
+              console.log();
+            }
           }
         }
       }

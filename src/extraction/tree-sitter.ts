@@ -36,6 +36,7 @@ import { XlsxExtractor } from './languages/xlsx-extractor';
 import { PptxExtractor } from './languages/pptx-extractor';
 import { PdfExtractor } from './languages/pdf-extractor';
 import { ImageExtractor } from './languages/image-extractor';
+import { AudioExtractor } from './languages/audio-extractor';
 import {
   registerExtractor,
   resolveExtractor,
@@ -5651,6 +5652,9 @@ registerExtractor({ name: 'pdf', match: ({ language }) => language === 'pdf', cr
 // document-only mode (no config); the orchestrator's async path constructs it
 // with the project's OCR config to enable recognition.
 registerExtractor({ name: 'image', match: ({ language }) => language === 'image', create: (f, s) => new ImageExtractor(f, s) });
+// Audio STT (Phase 6). Async + opt-in. Registry builds in document-only mode;
+// orchestrator's async path constructs with SttConfig to enable transcription.
+registerExtractor({ name: 'audio', match: ({ language }) => language === 'audio', create: (f, s) => new AudioExtractor(f, s) });
 // Delphi/FireMonkey form files (.dfm/.fmx) — checked AFTER file-level-only to
 // preserve the original chain order.
 registerExtractor({ name: 'pascal-form', match: ({ language, fileExtension }) => language === 'pascal' && (fileExtension === '.dfm' || fileExtension === '.fmx'), create: (f, s) => new DfmExtractor(f, s) });

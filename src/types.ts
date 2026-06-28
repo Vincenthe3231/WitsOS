@@ -106,6 +106,7 @@ export const LANGUAGES = [
   'pptx',
   'pdf',
   'image',
+  'audio',
   'unknown',
 ] as const;
 
@@ -447,6 +448,14 @@ export interface SearchResult {
 
   /** Matched text snippets for highlighting */
   highlights?: string[];
+}
+
+/**
+ * A chunk search result from chunks_fts (prose/document content).
+ */
+export interface ChunkSearchResult {
+  chunk: ChunkRecord;
+  score: number;
 }
 
 // =============================================================================

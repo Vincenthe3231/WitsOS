@@ -33,15 +33,20 @@ pnpx vitest run __tests__/extraction.test.ts -t "TypeScript"
 ### Key CLI commands (binary: `witsos`)
 
 ```bash
-witsos init [path]       # initialize + one-shot index
-witsos index [path]      # re-index from scratch
+witsos init [path]       # initialize + one-shot index; auto-creates WitsOS.json scaffold
+witsos index [path]      # re-index from scratch; auto-creates WitsOS.json scaffold if absent
 witsos sync [path]       # sync changed files only
 witsos watch [path]      # standalone file watcher — auto-syncs on change, Ctrl-C to stop
 witsos status [path]     # show index stats
+witsos query <text>      # search nodes_fts (code symbols) AND chunks_fts (prose/doc/transcript)
 witsos serve --mcp       # MCP daemon (started by AI agents; also auto-syncs when connected)
 ```
 
 `witsos watch` is the recommended way to keep the index live without an AI agent connected.
+
+`witsos query` searches two FTS5 indexes: **`nodes_fts`** (code symbol names, signatures, docstrings) and **`chunks_fts`** (prose body from documents, PDFs, OCR output, and STT transcripts). Results appear in two labeled sections. `--kind` applies only to symbols (chunk search skipped). `--json` output: `{ symbols: [...], chunks: [...] }`. **When adding a new searchable content type, update `searchChunks()` in `src/db/queries.ts` and keep this note current.**
+
+`witsos init` and `witsos index` auto-create `.witsos/WitsOS.json` (via `scaffoldProjectConfig` in `src/project-config.ts`) with all available config options at their defaults if the file does not already exist. **When adding new keys to `ProjectConfig`, add them to `scaffoldProjectConfig` too** — every fresh project should see every option.
 
 `copy-assets` (called from `build`) copies `src/db/schema.sql` and all `src/extraction/wasm/*.wasm` files into `dist/`. **Any new SQL or grammar wasm must be copied or it won't ship.**
 
@@ -67,7 +72,8 @@ The public API surface is `src/index.ts` — the `CodeGraph` class wires all the
 
 - `src/index.ts` — `CodeGraph` class: `init`/`open`/`close`, `indexAll`, `sync`, `searchNodes`, `getCallers`/`getCallees`, `getImpactRadius`, `buildContext`, `watch`/`unwatch`.
 - `src/db/` — `DatabaseConnection`, `QueryBuilder` (prepared statements), `schema.sql`, `sqlite-adapter.ts`. Backed by Node's built-in **`node:sqlite`** (`DatabaseSync`) — real SQLite with WAL + FTS5, exposed through a thin better-sqlite3-shaped adapter. The bundled runtime always ships Node ≥22.5, so `node:sqlite` is always available: **no native build step and no wasm fallback**. (Running from source needs Node ≥22.5.) `codegraph status` reports the live backend (`node-sqlite`, the sole backend).
-- `src/extraction/` — `ExtractionOrchestrator`, tree-sitter wrappers, per-language extractors under `languages/` (one file per language), plus standalone extractors for non-tree-sitter formats (`svelte-extractor.ts`, `vue-extractor.ts`, `liquid-extractor.ts`, `dfm-extractor.ts` for Delphi). `parse-worker.ts` runs heavy parsing off the main thread.
+- `src/extraction/` — `ExtractionOrchestrator`, tree-sitter wrappers, per-language extractors under `languages/` (one file per language), plus standalone extractors for non-tree-sitter formats (`svelte-extractor.ts`, `vue-extractor.ts`, `liquid-extractor.ts`, `dfm-extractor.ts` for Delphi, `audio-extractor.ts` for STT). `ocr/backend.ts` + `stt/backend.ts` hold the pluggable OCR/STT seams; `stt/models.ts` resolves/downloads/extracts whisper models (prefers int8 export), returns encoder/decoder/tokens triple; `audio/ffmpeg.ts` decodes audio to f32le PCM.
+- `src/workers/` — `JobPool` (generalized worker pool: per-kind lanes, recycle, timeout, crash-respawn, AbortSignal cancel, graceful shutdown) + per-kind worker entrypoints: `parse-worker.ts`, `ocr-worker.ts`, `stt-worker.ts`. Parse/OCR/STT all run off the main thread through the pool.
 - `src/resolution/` — `ReferenceResolver` orchestrates `import-resolver.ts` (with `path-aliases.ts` for tsconfig path aliases + cargo workspace member globs), `name-matcher.ts`, and `frameworks/` (Express, Laravel, Rails, FastAPI, Django, Flask, Spring, Gin, Axum, ASP.NET, Vapor, React Router, SvelteKit, Vue/Nuxt, Cargo workspaces). Frameworks emit `route` nodes and `references` edges.
 - `src/graph/` — `GraphTraverser` (BFS/DFS, impact radius, path finding) and `GraphQueryManager` (high-level queries).
 - `src/context/` — `ContextBuilder` + formatter for markdown/JSON output.
@@ -82,7 +88,7 @@ The public API surface is `src/index.ts` — the `CodeGraph` class wires all the
 
 Defined in `src/types.ts`. Both extractors and resolvers must use these exact strings.
 
-- **NodeKind**: `file`, `module`, `class`, `struct`, `interface`, `trait`, `protocol`, `function`, `method`, `property`, `field`, `variable`, `constant`, `enum`, `enum_member`, `type_alias`, `namespace`, `parameter`, `import`, `export`, `route`, `component`.
+- **NodeKind**: `file`, `module`, `class`, `struct`, `interface`, `trait`, `protocol`, `function`, `method`, `property`, `field`, `variable`, `constant`, `enum`, `enum_member`, `type_alias`, `namespace`, `parameter`, `import`, `export`, `route`, `component`, `document`, `section`.
 - **EdgeKind**: `contains`, `calls`, `imports`, `exports`, `extends`, `implements`, `references`, `type_of`, `returns`, `instantiates`, `overrides`, `decorates`.
 
 ### Multi-agent installer

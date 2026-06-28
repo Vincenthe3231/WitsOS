@@ -15,6 +15,7 @@ import {
   TraversalOptions,
   SearchOptions,
   SearchResult,
+  ChunkSearchResult,
   Context,
   GraphStats,
   TaskInput,
@@ -831,6 +832,14 @@ export class WitsOS {
    */
   searchNodes(query: string, options?: SearchOptions): SearchResult[] {
     return this.queries.searchNodes(query, options);
+  }
+
+  /**
+   * Search prose chunks (documents, transcripts, PDFs) by full-text.
+   * Queries chunks_fts; returns BM25-ranked results.
+   */
+  searchChunks(query: string, options?: { limit?: number; offset?: number }): ChunkSearchResult[] {
+    return this.queries.searchChunks(query, options);
   }
 
   /**

@@ -17,6 +17,7 @@ import {
   SearchOptions,
   SearchResult,
   ChunkRecord,
+  ChunkSearchResult,
 } from '../types';
 import { safeJsonParse } from '../utils';
 import { kindBonus, nameMatchBonus, scorePathRelevance } from '../search/query-utils';
@@ -1892,6 +1893,62 @@ export class QueryBuilder {
       this.stmts.deleteChunksByFile = this.db.prepare('DELETE FROM chunks WHERE file_path = ?');
     }
     this.stmts.deleteChunksByFile.run(filePath);
+  }
+
+  /**
+   * Full-text search over prose chunks (chunks_fts).
+   * Returns results sorted by BM25 relevance, highest first.
+   */
+  searchChunks(query: string, options: { limit?: number; offset?: number } = {}): ChunkSearchResult[] {
+    const { limit = 20, offset = 0 } = options;
+    if (!query || !query.trim()) return [];
+
+    const ftsQuery = query
+      .replace(/['"*():^]/g, '')
+      .split(/\s+/)
+      .filter(term => term.length > 0)
+      .filter(term => !/^(AND|OR|NOT|NEAR)$/i.test(term))
+      .map(term => `"${term}"*`)
+      .join(' OR ');
+
+    if (!ftsQuery) return [];
+
+    const sql = `
+      SELECT c.id, c.file_path, c.node_id, c.chunk_index, c.char_start, c.char_end,
+             c.body, c.metadata, c.updated_at,
+             bm25(chunks_fts, 0, 1, 5, 1) AS score
+      FROM chunks_fts
+      JOIN chunks c ON chunks_fts.id = c.id
+      WHERE chunks_fts MATCH ?
+      ORDER BY score
+      LIMIT ? OFFSET ?
+    `;
+
+    type ChunkRow = {
+      id: string; file_path: string; node_id: string | null;
+      chunk_index: number; char_start: number; char_end: number;
+      body: string; metadata: string | null; updated_at: number; score: number;
+    };
+
+    try {
+      const rows = this.db.prepare(sql).all(ftsQuery, limit, offset) as ChunkRow[];
+      return rows.map(row => ({
+        chunk: {
+          id: row.id,
+          filePath: row.file_path,
+          nodeId: row.node_id ?? undefined,
+          chunkIndex: row.chunk_index,
+          charStart: row.char_start,
+          charEnd: row.char_end,
+          body: row.body,
+          metadata: row.metadata ? safeJsonParse(row.metadata, undefined) : undefined,
+          updatedAt: row.updated_at,
+        } as ChunkRecord,
+        score: Math.abs(row.score),
+      }));
+    } catch {
+      return [];
+    }
   }
 
   /**
