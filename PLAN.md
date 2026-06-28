@@ -87,8 +87,10 @@ Classifier (async, per-file)
 | 2 | Text docs: `.txt`, `.md`, `.csv` extractors + chunk storage wired in | ✅ done |
 | 3 | Office: `.docx`, `.xlsx`, `.pptx` — ZIP+XML, pure-JS, no native build | ✅ done |
 | 4 | PDF — text-layer extraction via JS PDF lib; scanned falls to Phase 5 | ✅ done |
-| 5 | OCR — images + scanned PDF via opt-in in-process ONNX OCR (PP-OCRv4/RapidOCR via onnxruntime-node; no Python). Image-file OCR ✅; scanned-PDF rasterization + OCR worker = open spikes | 🟦 in progress |
-| 6 | Audio / Video → STT via FFmpeg + Whisper sidecars; add worker pool | ⬜ |
+| 5 | OCR — images via opt-in ONNX OCR (PP-OCRv4 via onnxruntime-node; no Python). OCR worker thread delivered in Phase 6. Open spike: scanned-PDF rasterizer | ✅ done (OCR worker = Phase 6) |
+| 6a | **Generalized worker pool** (`src/workers/JobPool`) — parse/ocr/stt lanes off main thread, recycle, crash-respawn, AbortSignal, graceful shutdown | ✅ done |
+| 6b | **Audio STT** — `sherpa-onnx` backend seam, FFmpeg decode wrapper, `AudioExtractor`, 8 audio extensions, `stt` + `workers` config blocks, interactive opt-in prompt | ✅ done |
+| 6c | Video (audio-track STT + embedded subtitles + keyframe extraction) | ⬜ deferred |
 | 7 | Embeddings + vector store — sqlite-vec or sidecar; local-first model | ⬜ |
 | 8 | Cross-document graph + unified search (FTS + vector + graph blended) | ⬜ |
 
@@ -114,18 +116,16 @@ Before embeddings land, these gaps must close:
 
 | Gap | Problem | Fix |
 |-----|---------|-----|
-| Single parse-worker | OCR/STT/embedding are 10–100× heavier than tree-sitter | Worker pool (≈ CPU count) |
+| ~~Single parse-worker~~ | ~~OCR/STT/embedding are 10–100× heavier than tree-sitter~~ | ✅ `JobPool` delivered in Phase 6 — parse/ocr/stt lanes |
 | No `embedding_status` column | Users can't tell if semantic search is ready | Add to `files` table |
 | `witsos status` shows one metric | Embeddings complete asynchronously | Surface FTS% and embedding% separately |
 | Classifier is implicit | Extension-based dispatch fine for code, ambiguous for other MIME | Explicit classifier for non-code types only |
-
-Worker pool is prerequisite for Phase 6 too — add it there, reuse in Phase 7.
 
 ---
 
 ## 6. Refactoring Opportunities (ongoing)
 
-- **Parse-worker pool** (size ≈ CPU count) instead of single recycled worker — throughput win, prerequisite for heavy doc adapters
+- ~~**Parse-worker pool**~~ — ✅ delivered: `JobPool` in `src/workers/` generalizes parse + adds ocr/stt lanes; reuse in Phase 7 for embed lane
 - **Batched SQLite writes** — confirm `storeExtractionResult` wraps per-file inserts in a transaction; serial main-thread writes bottleneck on large repos
 - **Kind-aware MCP tools** — `callers`/`callees`/`impact` meaningless on `chunk`; gate by node kind so doc nodes don't pollute code-flow answers (`src/mcp/tools.ts`, `server-instructions.ts`)
 - **`chunks_fts` exposed in search** — `searchNodes` currently queries only `nodes_fts`; add a parallel `searchChunks` path and unify results
@@ -155,17 +155,12 @@ Worker pool is prerequisite for Phase 6 too — add it there, reuse in Phase 7.
 
 ## Bottom Line
 
-Phases 0–4 complete. Architecture refactored, text document pipeline live, Office formats indexed, PDF text-layer indexed via pdf-parse (pure JS, no native build).
+**Phases 0–6b complete.**
 
-Phase 5 in progress: OCR is an opt-in, in-process ONNX path (PP-OCRv4/RapidOCR via
-onnxruntime-node — **no Python sidecar**), pivoting away from the PaddleOCR-Python plan.
-Image-file OCR is wired (classification, pluggable `OcrBackend`, lazy-gated `ImageExtractor`,
-generalized async-extractor dispatch, `WitsOS.json` `ocr` block). Default install stays pure
-WASM + `node:sqlite`; OCR deps (`@gutenye/ocr-node` → `onnxruntime-node` + `sharp`) are optional.
-Open spikes: pure/no-build PDF→image rasterizer for scanned PDFs, and a dedicated OCR worker
-thread (a minimal pull-forward of the Phase 6 worker pool — OCR currently runs on the main
-thread like the PDF path). VLM OCR (Qwen2.5-VL / PaddleOCR-VL / DeepSeek-OCR) is a planned
-**optional** backend behind `OcrBackend`, not the Phase 5 default.
+- 0–4: ExtractorRegistry, binary-safe adapters, chunks/FTS5, text/Office/PDF extraction.
+- Phase 5: Image OCR wired — pluggable `OcrBackend` (PP-OCRv4 via onnxruntime-node, no Python), `ImageExtractor`, `WitsOS.json` `ocr` block. Open spike: scanned-PDF rasterizer.
+- Phase 6a: Generalized `JobPool` (`src/workers/`) — parse/ocr/stt lanes, recycle-after-N, timeout, crash-respawn, AbortSignal cancel, graceful shutdown. OCR moved off main thread (`ocr-worker.ts`).
+- Phase 6b: Audio STT — `SttBackend` seam (`sherpa-onnx` default, lazy-load null-not-throw), FFmpeg decode wrapper, `AudioExtractor` (gating mirrors OCR: disabled → document-only; backend/ffmpeg absent → document-only + warn; enabled + present → timestamped transcript chunks). 8 audio extensions in `EXTENSION_MAP`. `stt`/`workers` config blocks in `WitsOS.json`. Interactive TTY opt-in prompt after `witsos init`. `IndexResult` reports `ocrFilesProcessed`/`sttFilesProcessed`.
+- Phase 6c (video) deferred — audio-track STT + embedded subtitle extraction + keyframes are their own phase.
 
-Rust stays on shelf. Worker pool is the next architectural prerequisite — partially pulled
-forward into Phase 5 (OCR worker), fully generalized in Phase 6, reused in Phase 7.
+Default install still pure WASM + `node:sqlite`. STT/FFmpeg/sherpa-onnx/models all opt-in, never bundled. Rust stays on shelf. Next: Phase 7 (embeddings) reuses `JobPool` `embed` lane.

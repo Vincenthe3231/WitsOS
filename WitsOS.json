@@ -1,0 +1,25 @@
+{
+  "extensions": {},
+  "includeIgnored": [],
+  "exclude": [],
+  "ocr": {
+    "enabled": false,
+    "languages": [
+      "en"
+    ],
+    "maxImageMP": 25,
+    "minConfidence": 0.5
+  },
+  "stt": {
+    "enabled": false,
+    "model": "base",
+    "language": "auto",
+    "diarize": false,
+    "minConfidence": 0
+  },
+  "workers": {
+    "parse": null,
+    "ocr": 1,
+    "stt": 1
+  }
+}

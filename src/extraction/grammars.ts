@@ -10,7 +10,7 @@ import * as path from 'path';
 import { Parser, Language as WasmLanguage } from 'web-tree-sitter';
 import { Language } from '../types';
 
-export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'plaintext' | 'markdown' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'image' | 'unknown'>;
+export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'plaintext' | 'markdown' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'image' | 'audio' | 'unknown'>;
 
 /**
  * WASM filename map — maps each language to its .wasm grammar file
@@ -140,6 +140,16 @@ export const EXTENSION_MAP: Record<string, Language> = {
   '.tif': 'image',
   '.bmp': 'image',
   '.webp': 'image',
+  // Audio STT (Phase 6). Indexed as transcript chunks when the opt-in STT
+  // backend is present and enabled; otherwise yields a document node only.
+  '.mp3': 'audio',
+  '.wav': 'audio',
+  '.m4a': 'audio',
+  '.aac': 'audio',
+  '.flac': 'audio',
+  '.ogg': 'audio',
+  '.opus': 'audio',
+  '.wma': 'audio',
 };
 
 /**
@@ -354,6 +364,7 @@ export function isLanguageSupported(language: Language): boolean {
   if (language === 'properties') return true; // Spring config keys
   if (language === 'pdf') return true; // PdfExtractor (async, Phase 4)
   if (language === 'image') return true; // ImageExtractor (async OCR, Phase 5)
+  if (language === 'audio') return true; // AudioExtractor (async STT, Phase 6)
   if (language === 'unknown') return false;
   return language in WASM_GRAMMAR_FILES;
 }
@@ -365,7 +376,7 @@ export function isLanguageSupported(language: Language): boolean {
  * `requestParse`. PDF (text layer, Phase 4) and image (OCR, Phase 5) qualify.
  */
 export function isAsyncExtractorLanguage(language: Language): boolean {
-  return language === 'pdf' || language === 'image';
+  return language === 'pdf' || language === 'image' || language === 'audio';
 }
 
 /**
@@ -481,6 +492,7 @@ export function getLanguageDisplayName(language: Language): string {
     pptx: 'PowerPoint Presentation',
     pdf: 'PDF Document',
     image: 'Image (OCR)',
+    audio: 'Audio (STT)',
     unknown: 'Unknown',
   };
   return names[language] || language;

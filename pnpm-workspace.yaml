@@ -1,6 +1,7 @@
 allowBuilds:
   esbuild: true
-  onnxruntime-node: set this to true or false
+  ffmpeg-static: true
+  onnxruntime-node: true
   sharp: true
   workerd: true
 overrides:

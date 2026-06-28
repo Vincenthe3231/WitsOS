@@ -69,6 +69,35 @@ export interface ProjectConfig {
     /** Drop recognized lines below this confidence [0,1]. Default 0.5. */
     minConfidence?: number;
   };
+  /**
+   * Opt-in STT (Phase 6). Audio files are transcribed only when `stt.enabled`
+   * is true AND the optional `sherpa-onnx` + `ffmpeg-static` packages are
+   * installed. Absent/disabled yields a `document` node and zero chunks.
+   */
+  stt?: {
+    enabled?: boolean;
+    /** Model size keyword ("base", "small", "medium") or absolute path. */
+    model?: string;
+    /** Absolute path to a local model directory (for offline/air-gapped use). */
+    modelPath?: string;
+    /** BCP-47 language code or "auto" for language detection. Default "auto". */
+    language?: string;
+    /** Enable speaker diarization. Default false. */
+    diarize?: boolean;
+    /** Drop transcript segments below this confidence [0,1]. Default 0.0. */
+    minConfidence?: number;
+    /** Explicit path to ffmpeg binary (falls back to ffmpeg-static / PATH). */
+    ffmpegPath?: string;
+  };
+  /**
+   * Worker-pool concurrency overrides. `null` = auto (≈ CPU count for parse).
+   * Useful on RAM-constrained machines to cap OCR/STT workers.
+   */
+  workers?: {
+    parse?: number | null;
+    ocr?: number | null;
+    stt?: number | null;
+  };
 }
 
 /** Validated OCR config. */
@@ -79,12 +108,32 @@ export interface OcrConfig {
   minConfidence: number;
 }
 
+/** Validated STT config. */
+export interface SttConfig {
+  enabled: boolean;
+  model: string;
+  modelPath: string | null;
+  language: string;
+  diarize: boolean;
+  minConfidence: number;
+  ffmpegPath: string | null;
+}
+
+/** Validated workers config. */
+export interface WorkersConfig {
+  parse: number | null;
+  ocr: number | null;
+  stt: number | null;
+}
+
 /** Parsed, validated view of a project's `WitsOS.json`. */
 interface ParsedConfig {
   extensions: Record<string, Language>;
   includeIgnored: string[];
   exclude: string[];
   ocr: OcrConfig;
+  stt: SttConfig;
+  workers: WorkersConfig;
 }
 
 /** The zero-config OCR default: disabled. */
@@ -94,6 +143,20 @@ const DEFAULT_OCR: OcrConfig = Object.freeze({
   maxImageMP: 25,
   minConfidence: 0.5,
 });
+
+/** The zero-config STT default: disabled. */
+const DEFAULT_STT: SttConfig = Object.freeze({
+  enabled: false,
+  model: 'base',
+  modelPath: null,
+  language: 'auto',
+  diarize: false,
+  minConfidence: 0.0,
+  ffmpegPath: null,
+});
+
+/** The zero-config workers default: auto everywhere. */
+const DEFAULT_WORKERS: WorkersConfig = Object.freeze({ parse: null, ocr: null, stt: null });
 
 interface CacheEntry {
   mtimeMs: number;
@@ -115,6 +178,8 @@ const EMPTY_CONFIG: ParsedConfig = Object.freeze({
   includeIgnored: Object.freeze([]) as unknown as string[],
   exclude: Object.freeze([]) as unknown as string[],
   ocr: DEFAULT_OCR,
+  stt: DEFAULT_STT,
+  workers: DEFAULT_WORKERS,
 });
 
 /**
@@ -167,15 +232,19 @@ function parseConfig(file: string): ParsedConfig {
   const includeIgnored = extractIncludeIgnored(parsed, file);
   const exclude = extractExclude(parsed, file);
   const ocr = extractOcr(parsed, file);
+  const stt = extractStt(parsed, file);
+  const workers = extractWorkers(parsed, file);
   if (
     extensions === EMPTY_EXTENSIONS &&
     includeIgnored.length === 0 &&
     exclude.length === 0 &&
-    ocr === DEFAULT_OCR
+    ocr === DEFAULT_OCR &&
+    stt === DEFAULT_STT &&
+    workers === DEFAULT_WORKERS
   ) {
     return EMPTY_CONFIG;
   }
-  return { extensions, includeIgnored, exclude, ocr };
+  return { extensions, includeIgnored, exclude, ocr, stt, workers };
 }
 
 /**
@@ -210,6 +279,75 @@ function extractOcr(parsed: object, file: string): OcrConfig {
       : DEFAULT_OCR.minConfidence;
 
   return { enabled: true, languages, maxImageMP, minConfidence };
+}
+
+/**
+ * Validate the `stt` block. Every failure mode degrades to the disabled
+ * default — a bad value never throws and never silently enables STT.
+ */
+function extractStt(parsed: object, file: string): SttConfig {
+  const raw = (parsed as ProjectConfig).stt;
+  if (raw === undefined) return DEFAULT_STT;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    logWarn(`Ignoring "stt" in ${PROJECT_CONFIG_FILENAME}: must be an object`, { file });
+    return DEFAULT_STT;
+  }
+
+  const enabled = raw.enabled === true;
+  if (!enabled) return DEFAULT_STT;
+
+  const model =
+    typeof raw.model === 'string' && raw.model.trim()
+      ? raw.model.trim()
+      : DEFAULT_STT.model;
+
+  const modelPath =
+    typeof raw.modelPath === 'string' && raw.modelPath.trim()
+      ? raw.modelPath.trim()
+      : null;
+
+  const language =
+    typeof raw.language === 'string' && raw.language.trim()
+      ? raw.language.trim()
+      : DEFAULT_STT.language;
+
+  const diarize = raw.diarize === true;
+
+  const minConfidence =
+    typeof raw.minConfidence === 'number' && raw.minConfidence >= 0 && raw.minConfidence <= 1
+      ? raw.minConfidence
+      : DEFAULT_STT.minConfidence;
+
+  const ffmpegPath =
+    typeof raw.ffmpegPath === 'string' && raw.ffmpegPath.trim()
+      ? raw.ffmpegPath.trim()
+      : null;
+
+  return { enabled: true, model, modelPath, language, diarize, minConfidence, ffmpegPath };
+}
+
+/**
+ * Validate the `workers` block. Returns the auto default on any bad value.
+ */
+function extractWorkers(parsed: object, file: string): WorkersConfig {
+  const raw = (parsed as ProjectConfig).workers;
+  if (raw === undefined) return DEFAULT_WORKERS;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    logWarn(`Ignoring "workers" in ${PROJECT_CONFIG_FILENAME}: must be an object`, { file });
+    return DEFAULT_WORKERS;
+  }
+
+  const parseNum = (v: unknown): number | null => {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'number' && Number.isInteger(v) && v > 0) return v;
+    return null;
+  };
+
+  return {
+    parse: parseNum((raw as WorkersConfig).parse),
+    ocr: parseNum((raw as WorkersConfig).ocr),
+    stt: parseNum((raw as WorkersConfig).stt),
+  };
 }
 
 /**
@@ -356,6 +494,82 @@ export function loadExcludePatterns(rootDir: string): string[] {
  */
 export function loadOcrConfig(rootDir: string): OcrConfig {
   return loadParsedConfig(rootDir).ocr;
+}
+
+/**
+ * Load the validated STT config for a project, mtime-cached. Returns the
+ * disabled default (`enabled:false`) when there is no `WitsOS.json` or no `stt`
+ * block — so the STT path is never taken unless a project opts in explicitly.
+ */
+export function loadSttConfig(rootDir: string): SttConfig {
+  return loadParsedConfig(rootDir).stt;
+}
+
+/**
+ * Load the validated workers config for a project, mtime-cached.
+ * Returns `{ parse: null, ocr: null, stt: null }` (auto everywhere) by default.
+ */
+export function loadWorkersConfig(rootDir: string): WorkersConfig {
+  return loadParsedConfig(rootDir).workers;
+}
+
+/**
+ * Write one or more top-level keys into the project's WitsOS.json, creating
+ * the file if absent. Used by the interactive opt-in prompt to persist the
+ * user's capability choice without clobbering other settings.
+ */
+export function writeProjectConfig(rootDir: string, patch: Partial<ProjectConfig>): void {
+  const file = path.join(rootDir, PROJECT_CONFIG_FILENAME);
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<string, unknown>;
+  } catch { /* file absent or invalid — start fresh */ }
+
+  const merged = { ...existing, ...patch };
+  fs.writeFileSync(file, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+  // Invalidate the mtime cache so next load picks up the change.
+  cache.delete(rootDir);
+}
+
+/**
+ * Create WitsOS.json with all available config options at their defaults.
+ * Only writes if the file does not already exist — never clobbers existing config.
+ * Call after `witsos init` / `witsos index` so users can discover and edit all flags
+ * without hand-writing JSON. When new config keys are added to ProjectConfig, add them
+ * here too so every fresh project gets a fully-documented scaffold.
+ */
+export function scaffoldProjectConfig(rootDir: string): void {
+  const file = path.join(rootDir, PROJECT_CONFIG_FILENAME);
+  if (fs.existsSync(file)) return;
+
+  const scaffold: ProjectConfig = {
+    extensions: {},
+    includeIgnored: [],
+    exclude: [],
+    ocr: {
+      enabled: false,
+      languages: ['en'],
+      maxImageMP: 25,
+      minConfidence: 0.5,
+    },
+    stt: {
+      enabled: false,
+      model: 'base',
+      language: 'auto',
+      diarize: false,
+      minConfidence: 0.0,
+    },
+    workers: {
+      parse: null,
+      ocr: 1,
+      stt: 1,
+    },
+  };
+
+  try {
+    fs.writeFileSync(file, JSON.stringify(scaffold, null, 2) + '\n', 'utf-8');
+    cache.delete(rootDir);
+  } catch { /* non-fatal: config is optional */ }
 }
 
 /** Test/maintenance hook: forget cached config (e.g. after rewriting it in a test). */
