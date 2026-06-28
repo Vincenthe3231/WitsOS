@@ -35,6 +35,7 @@ import { DocxExtractor } from './languages/docx-extractor';
 import { XlsxExtractor } from './languages/xlsx-extractor';
 import { PptxExtractor } from './languages/pptx-extractor';
 import { PdfExtractor } from './languages/pdf-extractor';
+import { ImageExtractor } from './languages/image-extractor';
 import {
   registerExtractor,
   resolveExtractor,
@@ -5646,6 +5647,10 @@ registerExtractor({ name: 'docx', match: ({ language }) => language === 'docx', 
 registerExtractor({ name: 'xlsx', match: ({ language }) => language === 'xlsx', create: (f, s) => new XlsxExtractor(f, s) });
 registerExtractor({ name: 'pptx', match: ({ language }) => language === 'pptx', create: (f, s) => new PptxExtractor(f, s) });
 registerExtractor({ name: 'pdf', match: ({ language }) => language === 'pdf', create: (f, s) => new PdfExtractor(f, s) });
+// Image OCR (Phase 5). Async + opt-in. The registry factory builds it in
+// document-only mode (no config); the orchestrator's async path constructs it
+// with the project's OCR config to enable recognition.
+registerExtractor({ name: 'image', match: ({ language }) => language === 'image', create: (f, s) => new ImageExtractor(f, s) });
 // Delphi/FireMonkey form files (.dfm/.fmx) — checked AFTER file-level-only to
 // preserve the original chain order.
 registerExtractor({ name: 'pascal-form', match: ({ language, fileExtension }) => language === 'pascal' && (fileExtension === '.dfm' || fileExtension === '.fmx'), create: (f, s) => new DfmExtractor(f, s) });

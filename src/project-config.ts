@@ -53,6 +53,30 @@ export interface ProjectConfig {
    * and your `.gitignore`.
    */
   exclude?: string[];
+  /**
+   * Opt-in OCR (Phase 5). Image files (and, later, scanned PDFs) are only run
+   * through the OCR backend when `ocr.enabled` is true AND the optional OCR
+   * package is installed. Absent/disabled (the default) keeps the index
+   * byte-identical to the no-OCR behavior: an image yields a `document` node
+   * and zero chunks (tracked, no junk text).
+   */
+  ocr?: {
+    enabled?: boolean;
+    /** Recognition languages (e.g. ["en"]). Default ["en"]. */
+    languages?: string[];
+    /** Cap input megapixels — larger images are downscaled. Default 25. */
+    maxImageMP?: number;
+    /** Drop recognized lines below this confidence [0,1]. Default 0.5. */
+    minConfidence?: number;
+  };
+}
+
+/** Validated OCR config. */
+export interface OcrConfig {
+  enabled: boolean;
+  languages: string[];
+  maxImageMP: number;
+  minConfidence: number;
 }
 
 /** Parsed, validated view of a project's `WitsOS.json`. */
@@ -60,7 +84,16 @@ interface ParsedConfig {
   extensions: Record<string, Language>;
   includeIgnored: string[];
   exclude: string[];
+  ocr: OcrConfig;
 }
+
+/** The zero-config OCR default: disabled. */
+const DEFAULT_OCR: OcrConfig = Object.freeze({
+  enabled: false,
+  languages: Object.freeze(['en']) as unknown as string[],
+  maxImageMP: 25,
+  minConfidence: 0.5,
+});
 
 interface CacheEntry {
   mtimeMs: number;
@@ -81,6 +114,7 @@ const EMPTY_CONFIG: ParsedConfig = Object.freeze({
   extensions: EMPTY_EXTENSIONS,
   includeIgnored: Object.freeze([]) as unknown as string[],
   exclude: Object.freeze([]) as unknown as string[],
+  ocr: DEFAULT_OCR,
 });
 
 /**
@@ -132,10 +166,50 @@ function parseConfig(file: string): ParsedConfig {
   const extensions = extractExtensions(parsed, file);
   const includeIgnored = extractIncludeIgnored(parsed, file);
   const exclude = extractExclude(parsed, file);
-  if (extensions === EMPTY_EXTENSIONS && includeIgnored.length === 0 && exclude.length === 0) {
+  const ocr = extractOcr(parsed, file);
+  if (
+    extensions === EMPTY_EXTENSIONS &&
+    includeIgnored.length === 0 &&
+    exclude.length === 0 &&
+    ocr === DEFAULT_OCR
+  ) {
     return EMPTY_CONFIG;
   }
-  return { extensions, includeIgnored, exclude };
+  return { extensions, includeIgnored, exclude, ocr };
+}
+
+/**
+ * Validate the `ocr` block. Every failure mode degrades to the disabled
+ * default — a bad value never throws and never silently enables OCR.
+ */
+function extractOcr(parsed: object, file: string): OcrConfig {
+  const raw = (parsed as ProjectConfig).ocr;
+  if (raw === undefined) return DEFAULT_OCR;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    logWarn(`Ignoring "ocr" in ${PROJECT_CONFIG_FILENAME}: must be an object`, { file });
+    return DEFAULT_OCR;
+  }
+
+  const enabled = raw.enabled === true;
+  if (!enabled) return DEFAULT_OCR; // disabled — no need to parse the rest
+
+  let languages = DEFAULT_OCR.languages;
+  if (Array.isArray(raw.languages)) {
+    const langs = raw.languages.filter((l): l is string => typeof l === 'string' && !!l.trim());
+    if (langs.length > 0) languages = langs.map((l) => l.trim());
+  }
+
+  const maxImageMP =
+    typeof raw.maxImageMP === 'number' && raw.maxImageMP > 0
+      ? raw.maxImageMP
+      : DEFAULT_OCR.maxImageMP;
+
+  const minConfidence =
+    typeof raw.minConfidence === 'number' && raw.minConfidence >= 0 && raw.minConfidence <= 1
+      ? raw.minConfidence
+      : DEFAULT_OCR.minConfidence;
+
+  return { enabled: true, languages, maxImageMP, minConfidence };
 }
 
 /**
@@ -273,6 +347,15 @@ export function loadIncludeIgnoredPatterns(rootDir: string): string[] {
  */
 export function loadExcludePatterns(rootDir: string): string[] {
   return loadParsedConfig(rootDir).exclude;
+}
+
+/**
+ * Load the validated OCR config for a project, mtime-cached. Returns the
+ * disabled default (`enabled:false`) when there is no `WitsOS.json` or no `ocr`
+ * block — so the OCR path is never taken unless a project opts in explicitly.
+ */
+export function loadOcrConfig(rootDir: string): OcrConfig {
+  return loadParsedConfig(rootDir).ocr;
 }
 
 /** Test/maintenance hook: forget cached config (e.g. after rewriting it in a test). */

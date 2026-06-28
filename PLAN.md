@@ -61,7 +61,7 @@ Classifier (async, per-file)
   │
   ├── docs   → embedder (text chunks from chunks_fts already exist)
   │
-  ├── image  → PaddleOCR sidecar → text → embedder
+  ├── image  → OCR worker (ONNX, opt-in) → text → embedder
   │
   └── other  → Handler + specialized indexing model
                    │
@@ -87,7 +87,7 @@ Classifier (async, per-file)
 | 2 | Text docs: `.txt`, `.md`, `.csv` extractors + chunk storage wired in | ✅ done |
 | 3 | Office: `.docx`, `.xlsx`, `.pptx` — ZIP+XML, pure-JS, no native build | ✅ done |
 | 4 | PDF — text-layer extraction via JS PDF lib; scanned falls to Phase 5 | ✅ done |
-| 5 | OCR — images + scanned PDF via PaddleOCR sidecar (opt-in) | ⬜ |
+| 5 | OCR — images + scanned PDF via opt-in in-process ONNX OCR (PP-OCRv4/RapidOCR via onnxruntime-node; no Python). Image-file OCR ✅; scanned-PDF rasterization + OCR worker = open spikes | 🟦 in progress |
 | 6 | Audio / Video → STT via FFmpeg + Whisper sidecars; add worker pool | ⬜ |
 | 7 | Embeddings + vector store — sqlite-vec or sidecar; local-first model | ⬜ |
 | 8 | Cross-document graph + unified search (FTS + vector + graph blended) | ⬜ |
@@ -100,7 +100,7 @@ Cheapest-first: front-load pure-JS/no-native types to validate the document path
 
 1. **Office .docx/.xlsx/.pptx** (Phase 3) — ZIP+XML, pure JS, no sidecar
 2. **PDF text layer** (Phase 4) — JS PDF lib, covers most PDFs
-3. **OCR / images** (Phase 5) — PaddleOCR opt-in sidecar
+3. **OCR / images** (Phase 5) — opt-in in-process ONNX OCR (PP-OCRv4 via onnxruntime-node; no Python sidecar)
 4. **Audio** (Phase 6a) — FFmpeg + Whisper opt-in
 5. **Video** (Phase 6b) — same sidecar model
 6. **Embeddings + vector search** (Phase 7) — requires chunks to exist (done)
@@ -157,6 +157,15 @@ Worker pool is prerequisite for Phase 6 too — add it there, reuse in Phase 7.
 
 Phases 0–4 complete. Architecture refactored, text document pipeline live, Office formats indexed, PDF text-layer indexed via pdf-parse (pure JS, no native build).
 
-Next: Phase 5 (OCR — images + scanned PDF via PaddleOCR opt-in sidecar).
+Phase 5 in progress: OCR is an opt-in, in-process ONNX path (PP-OCRv4/RapidOCR via
+onnxruntime-node — **no Python sidecar**), pivoting away from the PaddleOCR-Python plan.
+Image-file OCR is wired (classification, pluggable `OcrBackend`, lazy-gated `ImageExtractor`,
+generalized async-extractor dispatch, `WitsOS.json` `ocr` block). Default install stays pure
+WASM + `node:sqlite`; OCR deps (`@gutenye/ocr-node` → `onnxruntime-node` + `sharp`) are optional.
+Open spikes: pure/no-build PDF→image rasterizer for scanned PDFs, and a dedicated OCR worker
+thread (a minimal pull-forward of the Phase 6 worker pool — OCR currently runs on the main
+thread like the PDF path). VLM OCR (Qwen2.5-VL / PaddleOCR-VL / DeepSeek-OCR) is a planned
+**optional** backend behind `OcrBackend`, not the Phase 5 default.
 
-Rust stays on shelf. Worker pool is the next architectural prerequisite — add in Phase 6, reuse in Phase 7.
+Rust stays on shelf. Worker pool is the next architectural prerequisite — partially pulled
+forward into Phase 5 (OCR worker), fully generalized in Phase 6, reused in Phase 7.

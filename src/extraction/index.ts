@@ -18,8 +18,8 @@ import {
 } from '../types';
 import { QueryBuilder } from '../db/queries';
 import { extractFromSource } from './tree-sitter';
-import { detectLanguage, isSourceFile, isLanguageSupported, isFileLevelOnlyLanguage, initGrammars, loadGrammarsForLanguages } from './grammars';
-import { loadExtensionOverrides, loadIncludeIgnoredPatterns, loadExcludePatterns } from '../project-config';
+import { detectLanguage, isSourceFile, isLanguageSupported, isFileLevelOnlyLanguage, isAsyncExtractorLanguage, initGrammars, loadGrammarsForLanguages } from './grammars';
+import { loadExtensionOverrides, loadIncludeIgnoredPatterns, loadExcludePatterns, loadOcrConfig } from '../project-config';
 import { isWitsOSDataDir } from '../directory';
 import { logDebug, logWarn } from '../errors';
 import { validatePathWithinRoot, normalizePath } from '../utils';
@@ -1394,31 +1394,36 @@ export class ExtractionOrchestrator {
           continue;
         }
 
-        // Async extractors (PDF) run on the main thread — they bypass the parse
-        // worker because they re-read the file as binary and use async JS libs.
+        // Async extractors (PDF text layer, image OCR) run on the main thread —
+        // they bypass the parse worker because they re-read the file as binary
+        // and use async JS libs.
         const detectedLanguage = detectLanguage(filePath, content, overrides);
-        if (detectedLanguage === 'pdf') {
+        if (isAsyncExtractorLanguage(detectedLanguage)) {
           processed++;
-          let pdfResult: ExtractionResult;
+          // Force re-extraction: binary files (image/pdf) have a stable content
+          // hash even when OCR config changes, so the hash-equality guard in
+          // storeExtractionResult would silently skip them. Delete the stale
+          // record before extracting so storeExtractionResult always runs fresh.
+          this.queries.deleteFile(filePath);
+          let asyncResult: ExtractionResult;
           try {
-            const { PdfExtractor } = await import('./languages/pdf-extractor');
-            pdfResult = await new PdfExtractor(filePath, content).extract() as ExtractionResult;
-          } catch (pdfErr) {
+            asyncResult = await this.runAsyncExtractor(filePath, content, detectedLanguage);
+          } catch (asyncErr) {
             filesErrored++;
             errors.push({
-              message: pdfErr instanceof Error ? pdfErr.message : String(pdfErr),
+              message: asyncErr instanceof Error ? asyncErr.message : String(asyncErr),
               filePath,
               severity: 'error',
               code: 'parse_error',
             });
             continue;
           }
-          if (pdfResult.nodes.length > 0 || pdfResult.errors.length === 0) {
-            this.storeExtractionResult(filePath, content, detectedLanguage, stats, pdfResult);
+          if (asyncResult.nodes.length > 0 || asyncResult.errors.length === 0) {
+            this.storeExtractionResult(filePath, content, detectedLanguage, stats, asyncResult);
           }
           filesIndexed++;
-          totalNodes += pdfResult.nodes.length;
-          totalEdges += pdfResult.edges.length;
+          totalNodes += asyncResult.nodes.length;
+          totalEdges += asyncResult.edges.length;
           onProgress?.({ phase: 'parsing', current: processed, total });
           continue;
         }
@@ -1757,13 +1762,12 @@ export class ExtractionOrchestrator {
     // route nodes / middleware / etc.
     const frameworkNames = this.ensureDetectedFrameworks();
 
-    // Async extractors (PDF and future binary formats) are handled on the main
+    // Async extractors (PDF text layer, image OCR) are handled on the main
     // thread before entering the parse worker path. extractFromSource is sync;
     // these types bypass it via their own async extract() method.
     let result: ExtractionResult;
-    if (language === 'pdf') {
-      const { PdfExtractor } = await import('./languages/pdf-extractor');
-      result = await new PdfExtractor(relativePath, content).extract() as ExtractionResult;
+    if (isAsyncExtractorLanguage(language)) {
+      result = await this.runAsyncExtractor(relativePath, content, language);
     } else {
       result = extractFromSource(relativePath, content, language, frameworkNames);
     }
@@ -1774,6 +1778,30 @@ export class ExtractionOrchestrator {
     }
 
     return result;
+  }
+
+  /**
+   * Run an async, binary extractor (PDF text layer, image OCR) on the main
+   * thread — these re-read the file as bytes and use async JS libraries, so they
+   * bypass the WASM-tree-sitter parse worker. `isAsyncExtractorLanguage` gates
+   * which languages route here. Image OCR is constructed with the project's OCR
+   * config (opt-in); PDF has no config.
+   */
+  private async runAsyncExtractor(
+    filePath: string,
+    content: string,
+    language: Language,
+  ): Promise<ExtractionResult> {
+    if (language === 'image') {
+      const { ImageExtractor } = await import('./languages/image-extractor');
+      const ocr = loadOcrConfig(this.rootDir);
+      // Pass rootDir so ImageExtractor can resolve a relative filePath when
+      // reading the binary — but filePath itself stays as-is for node storage.
+      return (await new ImageExtractor(filePath, content, ocr, this.rootDir).extract()) as ExtractionResult;
+    }
+    // Default async extractor: PDF.
+    const { PdfExtractor } = await import('./languages/pdf-extractor');
+    return (await new PdfExtractor(filePath, content).extract()) as ExtractionResult;
   }
 
   /**

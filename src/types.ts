@@ -105,6 +105,7 @@ export const LANGUAGES = [
   'xlsx',
   'pptx',
   'pdf',
+  'image',
   'unknown',
 ] as const;
 

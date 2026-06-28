@@ -10,7 +10,7 @@ import * as path from 'path';
 import { Parser, Language as WasmLanguage } from 'web-tree-sitter';
 import { Language } from '../types';
 
-export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'plaintext' | 'markdown' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'unknown'>;
+export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'plaintext' | 'markdown' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'image' | 'unknown'>;
 
 /**
  * WASM filename map — maps each language to its .wasm grammar file
@@ -130,6 +130,16 @@ export const EXTENSION_MAP: Record<string, Language> = {
   '.pptx': 'pptx',
   // PDF text-layer extraction (Phase 4).
   '.pdf': 'pdf',
+  // Image OCR (Phase 5). Indexed only when the opt-in OCR backend is present
+  // and enabled; otherwise an image yields a document node and no chunks.
+  // Animations (.gif) deliberately excluded — single-frame raster formats only.
+  '.png': 'image',
+  '.jpg': 'image',
+  '.jpeg': 'image',
+  '.tiff': 'image',
+  '.tif': 'image',
+  '.bmp': 'image',
+  '.webp': 'image',
 };
 
 /**
@@ -343,8 +353,19 @@ export function isLanguageSupported(language: Language): boolean {
   if (language === 'xml') return true; // MyBatis mapper extractor
   if (language === 'properties') return true; // Spring config keys
   if (language === 'pdf') return true; // PdfExtractor (async, Phase 4)
+  if (language === 'image') return true; // ImageExtractor (async OCR, Phase 5)
   if (language === 'unknown') return false;
   return language in WASM_GRAMMAR_FILES;
+}
+
+/**
+ * Languages whose extractor is async + binary (re-reads file bytes itself) and
+ * therefore must run on the main thread, bypassing the WASM-tree-sitter parse
+ * worker. The orchestrator routes these through `runAsyncExtractor` instead of
+ * `requestParse`. PDF (text layer, Phase 4) and image (OCR, Phase 5) qualify.
+ */
+export function isAsyncExtractorLanguage(language: Language): boolean {
+  return language === 'pdf' || language === 'image';
 }
 
 /**
@@ -459,6 +480,7 @@ export function getLanguageDisplayName(language: Language): string {
     xlsx: 'Excel Spreadsheet',
     pptx: 'PowerPoint Presentation',
     pdf: 'PDF Document',
+    image: 'Image (OCR)',
     unknown: 'Unknown',
   };
   return names[language] || language;
