@@ -79,7 +79,7 @@ export class AudioExtractor implements StandaloneExtractor {
     const backend = await loadSttBackend();
     if (!backend) {
       logWarn(
-        'STT is enabled in WitsOS.json but sherpa-onnx is not installed — indexing audio as document-only. Run: pnpm add sherpa-onnx ffmpeg-static',
+        'STT is enabled in WitsOS.json but sherpa-onnx is not installed — indexing audio as document-only. Run: pnpm add sherpa-onnx ffmpeg-ffprobe-static',
         { filePath: this.filePath },
       );
       return documentOnly();
@@ -88,7 +88,7 @@ export class AudioExtractor implements StandaloneExtractor {
     const ffmpegBin = await locateFfmpeg(this.stt.ffmpegPath ?? undefined);
     if (!ffmpegBin) {
       logWarn(
-        'STT is enabled but ffmpeg is not available — indexing audio as document-only. Run: pnpm add ffmpeg-static',
+        'STT is enabled but ffmpeg is not available — indexing audio as document-only. Run: pnpm add ffmpeg-ffprobe-static',
         { filePath: this.filePath },
       );
       return documentOnly();
