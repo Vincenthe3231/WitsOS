@@ -52,4 +52,16 @@ export function registerDefaultMediaExtractors(): void {
       return new AudioExtractor(filePath, source, config as any, '');
     },
   });
+
+  // Video subtitles + metadata + audio-track STT (Phase 6c-1 & 6c-2)
+  registerMediaExtractor({
+    name: 'video',
+    match: ({ language }) => language === 'video',
+    lane: 'video',
+    createAsync: (filePath, bytesOrPath, config) => {
+      const { VideoExtractor } = require('./languages/video-extractor') as typeof import('./languages/video-extractor');
+      const source = typeof bytesOrPath === 'string' ? bytesOrPath : bytesOrPath.toString('binary');
+      return new VideoExtractor(filePath, source, config as any, '');
+    },
+  });
 }

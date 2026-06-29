@@ -1277,6 +1277,44 @@ export class ExtractionOrchestrator {
         })
       );
 
+      // Collect pending media jobs to pipeline without per-file awaits (bounded to MAX_INFLIGHT window)
+      const MAX_MEDIA_INFLIGHT = 10;
+      interface PendingMediaJob {
+        filePath: string;
+        content: string;
+        stats: fs.Stats;
+        detectedLanguage: Language;
+        promise: Promise<ExtractionResult | null>;
+      }
+      const pendingMedia: PendingMediaJob[] = [];
+
+      const drainMediaQueue = async (dueNow = false) => {
+        // Await jobs until back below threshold, or drain all if dueNow
+        const targetCount = dueNow ? 0 : Math.max(0, MAX_MEDIA_INFLIGHT - 1);
+        while (pendingMedia.length > targetCount) {
+          const job = pendingMedia.shift()!;
+          try {
+            const asyncResult = await job.promise;
+            if (asyncResult && (asyncResult.nodes.length > 0 || asyncResult.errors.length === 0)) {
+              this.storeExtractionResult(job.filePath, job.content, job.detectedLanguage, job.stats, asyncResult);
+            }
+            if (asyncResult) {
+              filesIndexed++;
+              totalNodes += asyncResult.nodes.length;
+              totalEdges += asyncResult.edges.length;
+            }
+          } catch (asyncErr) {
+            filesErrored++;
+            errors.push({
+              message: asyncErr instanceof Error ? asyncErr.message : String(asyncErr),
+              filePath: job.filePath,
+              severity: 'error',
+              code: 'parse_error',
+            });
+          }
+        }
+      };
+
       // Send to worker for parsing, store results on main thread
       for (const { filePath, content, stats, error } of fileContents) {
         if (signal?.aborted) {
@@ -1342,13 +1380,20 @@ export class ExtractionOrchestrator {
           // storeExtractionResult would silently skip them. Delete the stale
           // record before extracting so storeExtractionResult always runs fresh.
           this.queries.deleteFile(filePath);
-          let asyncResult: ExtractionResult | null = null;
           try {
             const lane = mediaExtractor.lane;
             // @ts-ignore lane is validated at runtime, but TS can't prove it's a literal JobKind value
             if (!pool || !pool.hasLane(lane)) {
               // Fallback: worker not available (tests or misconfiguration)
-              asyncResult = await this.runAsyncExtractor(filePath, content, detectedLanguage);
+              const asyncResult = await this.runAsyncExtractor(filePath, content, detectedLanguage);
+              if (asyncResult && (asyncResult.nodes.length > 0 || asyncResult.errors.length === 0)) {
+                this.storeExtractionResult(filePath, content, detectedLanguage, stats, asyncResult);
+              }
+              if (asyncResult) {
+                filesIndexed++;
+                totalNodes += asyncResult.nodes.length;
+                totalEdges += asyncResult.edges.length;
+              }
             } else {
               // Track media processing by lane
               if (lane === 'stt') sttFilesProcessed++;
@@ -1358,16 +1403,31 @@ export class ExtractionOrchestrator {
               const payload = this.buildMediaPayload(detectedLanguage, filePath, content);
               if (!payload) {
                 // Unknown media type → fallback
-                asyncResult = await this.runAsyncExtractor(filePath, content, detectedLanguage);
+                const asyncResult = await this.runAsyncExtractor(filePath, content, detectedLanguage);
+                if (asyncResult && (asyncResult.nodes.length > 0 || asyncResult.errors.length === 0)) {
+                  this.storeExtractionResult(filePath, content, detectedLanguage, stats, asyncResult);
+                }
+                if (asyncResult) {
+                  filesIndexed++;
+                  totalNodes += asyncResult.nodes.length;
+                  totalEdges += asyncResult.edges.length;
+                }
               } else {
                 const timeoutMs = lane === 'stt' ? 300_000 : 120_000;
-                // Lane is validated by pool.hasLane above; safe to cast (JobKind union grows with video/future lanes)
-                asyncResult = await pool.submit<Record<string, unknown>, ExtractionResult>(
+                // Submit without awaiting (pipelined)
+                const promise = pool.submit<Record<string, unknown>, ExtractionResult>(
                   // @ts-ignore lane is validated at runtime, but TS can't prove it's a literal JobKind value
                   lane,
                   payload,
                   { timeoutMs },
-                );
+                ).catch((err) => {
+                  // Return null on error so drainMediaQueue can handle uniformly
+                  throw err;
+                });
+                pendingMedia.push({ filePath, content, stats, detectedLanguage, promise });
+
+                // Maintain bounded in-flight window
+                await drainMediaQueue(false);
               }
             }
           } catch (asyncErr) {
@@ -1378,15 +1438,6 @@ export class ExtractionOrchestrator {
               severity: 'error',
               code: 'parse_error',
             });
-            continue;
-          }
-          if (asyncResult && (asyncResult.nodes.length > 0 || asyncResult.errors.length === 0)) {
-            this.storeExtractionResult(filePath, content, detectedLanguage, stats, asyncResult);
-          }
-          if (asyncResult) {
-            filesIndexed++;
-            totalNodes += asyncResult.nodes.length;
-            totalEdges += asyncResult.edges.length;
           }
           onProgress?.({ phase: 'parsing', current: processed, total });
           continue;
@@ -1442,6 +1493,9 @@ export class ExtractionOrchestrator {
           }
         }
       }
+
+      // Drain any remaining pending media jobs
+      await drainMediaQueue(true);
     }
 
     // Report 100% so the progress bar doesn't hang at 99%

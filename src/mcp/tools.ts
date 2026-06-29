@@ -1472,6 +1472,14 @@ export class ToolHandler {
   }
 
   /**
+   * Gate code-flow results to exclude prose nodes (document/section).
+   * These pollute answers to "what calls this?" when many media files are indexed.
+   */
+  private isCodeNode(node: Node): boolean {
+    return node.kind !== 'document' && node.kind !== 'section';
+  }
+
+  /**
    * Handle WitsOS_callers
    */
   private async handleCallers(args: Record<string, unknown>): Promise<ToolResult> {
@@ -1498,7 +1506,7 @@ export class ToolHandler {
       const labels = new Map<string, string>();
       for (const node of defNodes) {
         for (const c of cg.getCallers(node.id)) {
-          if (!seen.has(c.node.id)) {
+          if (!seen.has(c.node.id) && this.isCodeNode(c.node)) {
             seen.add(c.node.id);
             callers.push(c.node);
             const label = this.edgeLabel(c.edge);
@@ -1571,7 +1579,7 @@ export class ToolHandler {
       const labels = new Map<string, string>();
       for (const node of defNodes) {
         for (const c of cg.getCallees(node.id)) {
-          if (!seen.has(c.node.id)) {
+          if (!seen.has(c.node.id) && this.isCodeNode(c.node)) {
             seen.add(c.node.id);
             callees.push(c.node);
             const label = this.edgeLabel(c.edge);
@@ -1642,13 +1650,21 @@ export class ToolHandler {
       for (const node of defNodes) {
         const impact = cg.getImpactRadius(node.id, depth);
         for (const [id, n] of impact.nodes) {
-          mergedNodes.set(id, n);
+          // Gate to code nodes only (exclude document/section)
+          if (this.isCodeNode(n)) {
+            mergedNodes.set(id, n);
+          }
         }
         for (const e of impact.edges) {
-          const key = `${e.source}->${e.target}:${e.kind}`;
-          if (!seenEdges.has(key)) {
-            seenEdges.add(key);
-            mergedEdges.push(e);
+          // Only include edges between code nodes
+          const sourceNode = impact.nodes.get(e.source);
+          const targetNode = impact.nodes.get(e.target);
+          if (sourceNode && targetNode && this.isCodeNode(sourceNode) && this.isCodeNode(targetNode)) {
+            const key = `${e.source}->${e.target}:${e.kind}`;
+            if (!seenEdges.has(key)) {
+              seenEdges.add(key);
+              mergedEdges.push(e);
+            }
           }
         }
       }

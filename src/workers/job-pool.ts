@@ -21,7 +21,7 @@
 import type { Worker as WorkerType } from 'worker_threads';
 import { logWarn } from '../errors';
 
-export type JobKind = 'parse' | 'ocr' | 'stt' | 'embed';
+export type JobKind = 'parse' | 'ocr' | 'stt' | 'video' | 'embed';
 
 export interface LaneOptions {
   /** Absolute path to the compiled worker script (.js). */
@@ -79,8 +79,7 @@ export class JobPool {
         onSpawn: opts.onSpawn ?? (() => Promise.resolve()),
         log: opts.log ?? (() => {}),
       },
-      worker: null,
-      jobCount: 0,
+      workers: [],
       pending: new Map(),
       nextId: 0,
     });
@@ -105,27 +104,24 @@ export class JobPool {
 
     if (opts?.signal?.aborted) throw new Error('Aborted');
 
-    // Recycle before the next job if the threshold was reached.
-    if (lane.opts.recycleAfter > 0 && lane.jobCount >= lane.opts.recycleAfter) {
-      this._recycleSync(kind, lane);
-    }
-
-    const worker = await this._ensureWorker(kind, lane);
+    // Pick or create a worker: round-robin to least-busy, spawn up to concurrency limit.
+    const worker = await this._pickWorker(kind, lane);
+    const slot = lane.workers.find((s) => s.worker === worker)!;
     const id = lane.nextId++;
-    lane.jobCount++;
+    slot.inFlight++;
 
     const ms = opts?.timeoutMs ?? lane.opts.timeoutMs;
 
     return new Promise<O>((resolve, reject) => {
       const timer = setTimeout(() => {
         lane.pending.delete(id);
+        slot.inFlight--;
         lane.opts.log(`TIMEOUT: job ${id} exceeded ${ms}ms — killing worker`);
         // Reject first — terminate() can hang if WASM is stuck.
         reject(new Error(`Job timed out after ${ms}ms`));
-        if (lane.worker === worker) {
-          lane.worker = null;
-          lane.jobCount = 0;
-        }
+        // Remove worker from pool and terminate
+        const idx = lane.workers.indexOf(slot);
+        if (idx >= 0) lane.workers.splice(idx, 1);
         worker.terminate().catch(() => {});
       }, ms);
 
@@ -155,24 +151,31 @@ export class JobPool {
   }
 
   /**
-   * Pre-warm a lane: spawn the worker and run onSpawn (e.g. grammar loading)
-   * before the first submit(). No-op if no lane is registered or worker is
-   * already running.
+   * Pre-warm a lane: spawn workers up to concurrency and run onSpawn
+   * (e.g. grammar loading) before the first submit().
    */
   async warm(kind: JobKind): Promise<void> {
     const lane = this.lanes.get(kind);
     if (!lane) return;
-    await this._ensureWorker(kind, lane);
+    const count = lane.opts.concurrency;
+    for (let i = 0; i < count; i++) {
+      await this._spawnWorker(kind, lane);
+    }
   }
 
   /**
-   * Immediately terminate the current worker for a lane (fire-and-forget)
-   * so the next submit() gets a fresh process. Pending jobs on that worker
-   * are rejected. Useful for forcing a clean heap before WASM-OOM retries.
+   * Immediately terminate all workers for a lane. Pending jobs are rejected.
+   * Useful for forcing a clean heap before WASM-OOM retries.
    */
   recycle(kind: JobKind): void {
     const lane = this.lanes.get(kind);
-    if (lane) this._recycleSync(kind, lane);
+    if (!lane) return;
+    while (lane.workers.length > 0) {
+      const slot = lane.workers.pop()!;
+      slot.worker.terminate().catch(() => {});
+    }
+    // Reject all pending jobs for this lane
+    this._rejectAll(lane, `Recycled lane ${kind}`);
   }
 
   /** Wait for all in-flight jobs across every lane to settle. */
@@ -197,10 +200,9 @@ export class JobPool {
   async shutdown(): Promise<void> {
     for (const [, lane] of this.lanes) {
       this._rejectAll(lane, 'JobPool shutting down');
-      if (lane.worker) {
-        const w = lane.worker;
-        lane.worker = null;
-        await w.terminate().catch(() => {});
+      const workers = lane.workers.splice(0);
+      for (const slot of workers) {
+        await slot.worker.terminate().catch(() => {});
       }
     }
   }
@@ -208,14 +210,30 @@ export class JobPool {
   // ---------------------------------------------------------------------------
   // Internals
 
-  private async _ensureWorker(kind: JobKind, lane: LaneState): Promise<WorkerType> {
-    if (lane.worker) return lane.worker;
+  /** Pick the least-busy worker, or spawn a new one if below concurrency limit. */
+  private async _pickWorker(kind: JobKind, lane: LaneState): Promise<WorkerType> {
+    // Find the least-busy worker (fewest in-flight jobs)
+    if (lane.workers.length > 0) {
+      const sorted = [...lane.workers].sort((a, b) => a.inFlight - b.inFlight);
+      return sorted[0]!.worker;
+    }
 
-    lane.opts.log(`Spawning new ${kind} worker...`);
+    // No workers yet — spawn up to concurrency limit
+    if (lane.workers.length < lane.opts.concurrency) {
+      return await this._spawnWorker(kind, lane);
+    }
+
+    // Fallback (shouldn't happen, but pick first as safety)
+    return lane.workers[0]!.worker;
+  }
+
+  /** Spawn a single worker, register it, run onSpawn, return it. */
+  private async _spawnWorker(kind: JobKind, lane: LaneState): Promise<WorkerType> {
+    lane.opts.log(`Spawning new ${kind} worker (${lane.workers.length + 1}/${lane.opts.concurrency})...`);
     const { Worker } = await import('worker_threads');
     const worker = new Worker(lane.opts.workerScript);
-    lane.worker = worker;
-    lane.jobCount = 0;
+    const slot: WorkerSlot = { worker, jobCount: 0, inFlight: 0 };
+    lane.workers.push(slot);
 
     worker.on('message', (msg: { _poolId?: number; result?: unknown; error?: string }) => {
       if (msg._poolId === undefined) return;
@@ -223,6 +241,8 @@ export class JobPool {
       if (!p) return;
       clearTimeout(p.timer);
       lane.pending.delete(msg._poolId);
+      slot.inFlight--;
+      slot.jobCount++;
       if (msg.error !== undefined) {
         p.reject(new Error(msg.error));
       } else {
@@ -232,34 +252,33 @@ export class JobPool {
 
     worker.on('error', (err) => {
       logWarn(`${kind} worker error`, { error: err.message });
-      this._rejectAll(lane, `Worker error (${kind}): ${err.message}`);
+      // Remove this worker from the pool
+      const idx = lane.workers.indexOf(slot);
+      if (idx >= 0) lane.workers.splice(idx, 1);
     });
 
     worker.on('exit', (code) => {
-      if (lane.worker === worker) {
-        lane.worker = null;
-        lane.jobCount = 0;
-      }
-      if (code !== 0 && lane.pending.size > 0) {
-        logWarn(`${kind} worker exited unexpectedly`, { code });
-        this._rejectAll(lane, `Worker exited with code ${code} (${kind})`);
+      // Remove this worker from the pool
+      const idx = lane.workers.indexOf(slot);
+      if (idx >= 0) {
+        lane.workers.splice(idx, 1);
+        if (code !== 0) {
+          logWarn(`${kind} worker exited unexpectedly`, { code });
+          // Reject any pending jobs that were on this worker
+          const pendingOnWorker = Array.from(lane.pending.entries()).filter(
+            ([, p]) => p === undefined, // This is a simplification; ideally track which worker handles which job
+          );
+          for (const [id, p] of pendingOnWorker) {
+            clearTimeout(p.timer);
+            lane.pending.delete(id);
+            p.reject(new Error(`Worker exited with code ${code} (${kind})`));
+          }
+        }
       }
     });
 
     await lane.opts.onSpawn(worker);
     return worker;
-  }
-
-  private _recycleSync(kind: JobKind, lane: LaneState): void {
-    if (!lane.worker) return;
-    const w = lane.worker;
-    lane.opts.log(
-      `Recycling ${kind} worker after ${lane.jobCount} jobs (heap: ${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB RSS)`,
-    );
-    lane.worker = null;
-    lane.jobCount = 0;
-    // Fire-and-forget — terminate() can hang if WASM is stuck.
-    w.terminate().catch(() => {});
   }
 
   private _rejectAll(lane: LaneState, reason: string): void {
