@@ -1,4 +1,5 @@
 {
+  "_version": 1,
   "extensions": {},
   "includeIgnored": [],
   "exclude": [],
@@ -15,7 +16,8 @@
     "model": "base",
     "language": "auto",
     "diarize": false,
-    "minConfidence": 0
+    "minConfidence": 0,
+    "maxDurationSecs": 1800
   },
   "workers": {
     "parse": null,

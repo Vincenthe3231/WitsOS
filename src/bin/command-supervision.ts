@@ -18,7 +18,7 @@
  * watchdog never blocks the command from running. Both honour the same env
  * switches as `serve` (`WitsOS_NO_WATCHDOG`, `WitsOS_PPID_POLL_MS=0`).
  */
-import { installMainThreadWatchdog } from '../mcp/liveness-watchdog';
+import { installMainThreadWatchdog, parseWatchdogTimeoutMs } from '../mcp/liveness-watchdog';
 import { supervisionLostReason, parsePpidPollMs, parseHostPpid } from '../mcp/ppid-watchdog';
 import { isProcessAlive } from '../mcp/daemon-registry';
 import { HOST_PPID_ENV } from '../extraction/wasm-runtime-flags';
@@ -37,8 +37,14 @@ export interface CommandSupervision {
 export function installCommandSupervision(label: string): CommandSupervision {
   // Liveness watchdog: a separate process that SIGKILLs us if our event loop
   // stops turning for too long (a wedged synchronous loop). Self-disables on
-  // WitsOS_NO_WATCHDOG.
-  const liveness = installMainThreadWatchdog();
+  // WitsOS_NO_WATCHDOG. Batch commands (index/init) legitimately run long
+  // synchronous extraction work on the main thread, so use a 10-minute timeout
+  // instead of the 60s MCP default (tuned for a wedged query, not batch work).
+  const batchTimeoutMs = parseWatchdogTimeoutMs(
+    process.env.WitsOS_WATCHDOG_TIMEOUT_MS,
+    10 * 60_000  // 10 minutes for batch indexing
+  );
+  const liveness = installMainThreadWatchdog(batchTimeoutMs);
 
   // PPID watchdog: detect that the parent (or the host threaded past the
   // relaunch shim) died and we've been orphaned, then exit instead of leaking.

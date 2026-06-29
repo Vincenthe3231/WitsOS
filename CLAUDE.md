@@ -19,6 +19,11 @@ pnpm run clean                # rm -rf dist
 
 # Relink globally after build
 CI=true pnpm link . --global
+# NOTE (Volta users): Volta-managed pnpm rejects global commands
+# ("Volta error: pnpm global commands is not supported yet"). The global
+# `witsos` link is a symlink into dist/, so it survives in-place rebuilds and
+# you rarely need to relink. If you must recreate it, use `npm link` (npm is
+# Volta-shimmed and supports global) instead of `pnpm link --global`.
 
 pnpm test                # vitest run (all)
 pnpm run test:watch
@@ -50,7 +55,9 @@ witsos serve --mcp       # MCP daemon (started by AI agents; also auto-syncs whe
 
 `copy-assets` (called from `build`) copies `src/db/schema.sql` and all `src/extraction/wasm/*.wasm` files into `dist/`. **Any new SQL or grammar wasm must be copied or it won't ship.**
 
-Node engines: `>=20.0.0 <25.0.0`. There is a hard exit on Node 25.x and below 20 (see `src/bin/node-version-check.ts`).
+Node engines: `>=20.0.0 <25.0.0`. There is a hard exit on Node **25 or newer** and below 20 (see `src/bin/node-version-check.ts`). Node 25+ has a V8 turboshaft WASM-JIT Zone-allocator bug that OOM-crashes tree-sitter grammar compilation; override with `WitsOS_ALLOW_UNSAFE_NODE=1` only to test a future fix.
+
+**Pinned toolchain (治本 for the Windows env churn):** Node is pinned to 22 LTS via **Volta** (`"volta": { "node": "22.23.1" }` in `package.json`; machine default set with `volta install node@22`), so the right Node auto-activates on `cd` and the global `witsos` binary runs on 22 in every project dir. pnpm is pinned to `11.0.8` via both the `packageManager` field and Volta (`volta install pnpm@11.0.8`, requires the persistent `VOLTA_FEATURE_PNPM=1` user env var) — a single frozen pnpm identity eliminates the `ERR_PNPM_UNEXPECTED_VIRTUAL_STORE` drift. `.npmrc` has `engine-strict=true` so pnpm hard-refuses installs on an out-of-range Node. If the virtual store ever corrupts, `pnpm run reset` wipes `node_modules`+lockfile and reinstalls.
 
 ## Architecture
 

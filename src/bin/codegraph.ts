@@ -58,16 +58,17 @@ async function loadWitsOS(): Promise<typeof import('../index')> {
 const importESM = new Function('specifier', 'return import(specifier)') as
   (specifier: string) => Promise<typeof import('@clack/prompts')>;
 
-// Block WitsOS on Node.js 25.x — V8's turboshaft WASM JIT has a Zone
+// Block WitsOS on Node.js 25+ — V8's turboshaft WASM JIT has a Zone
 // allocator bug that reliably crashes when compiling tree-sitter
-// grammars (see #54, #81, #140). The previous behaviour was a soft
+// grammars (see #54, #81, #140). Node 26+ is untested and outside the
+// supported `engines` range. The previous behaviour was a soft
 // console.warn that scrolls off-screen before the OOM crash 30 seconds
 // later, leading to a steady stream of "what is this OOM" reports.
 // Hard-exit before any WASM work; allow override via env var for users
 // who patched V8 themselves or want to test a future fix.
 const nodeVersion = process.versions.node;
 const nodeMajor = parseInt(nodeVersion.split('.')[0] ?? '0', 10);
-if (nodeMajor === 25) {
+if (nodeMajor >= 25) {
   process.stderr.write(buildNode25BlockBanner(nodeVersion) + '\n');
   if (!process.env.WitsOS_ALLOW_UNSAFE_NODE) {
     process.exit(1);

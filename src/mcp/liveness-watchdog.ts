@@ -104,11 +104,16 @@ process.stdin.resume();
  * handle to stop it, or `null` when disabled or when the child can't be spawned
  * (degraded, never throws — a missing watchdog must never keep a process from
  * starting).
+ *
+ * @param overrideTimeoutMs Optional timeout (ms) — when provided, used directly.
+ *   Otherwise reads `WitsOS_WATCHDOG_TIMEOUT_MS` env or falls back to the default.
+ *   Batch commands (index/init) pass a higher timeout since they legitimately
+ *   run long synchronous extraction work on the main thread.
  */
-export function installMainThreadWatchdog(): WatchdogHandle | null {
+export function installMainThreadWatchdog(overrideTimeoutMs?: number): WatchdogHandle | null {
   if (isEnvTruthy(process.env.WitsOS_NO_WATCHDOG)) return null;
 
-  const timeoutMs = parseWatchdogTimeoutMs(process.env.WitsOS_WATCHDOG_TIMEOUT_MS);
+  const timeoutMs = overrideTimeoutMs ?? parseWatchdogTimeoutMs(process.env.WitsOS_WATCHDOG_TIMEOUT_MS);
   const checkMs = deriveCheckIntervalMs(timeoutMs);
 
   let child: ChildProcess;
