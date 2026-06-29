@@ -168,12 +168,20 @@ export class VideoExtractor {
       const derivedFfprobe = ffmpegBin === 'ffmpeg'
         ? 'ffprobe'
         : ffmpegBin.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
-      const ffprobeExists = await import('fs').then(({ existsSync }) =>
-        derivedFfprobe === 'ffprobe' || existsSync(derivedFfprobe)
-      );
-      const ffprobeBin = ffprobeExists ? derivedFfprobe : 'ffprobe';
 
-      const output = await execAsync(ffprobeBin, [
+      // If using system ffprobe, validate it exists before spawning to avoid ENOENT.
+      if (derivedFfprobe === 'ffprobe') {
+        try {
+          const { execFile } = await import('child_process');
+          const { promisify } = await import('util');
+          await promisify(execFile)('ffprobe', ['-version'], { timeout: 3000 });
+        } catch {
+          // System ffprobe not on PATH — degrade gracefully
+          return null;
+        }
+      }
+
+      const output = await execAsync(derivedFfprobe, [
         '-v', 'error',
         '-show_entries', 'format=duration',
         '-show_entries', 'stream=codec_name,codec_type,width,height',
