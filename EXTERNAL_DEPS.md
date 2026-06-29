@@ -14,7 +14,15 @@ WitsOS bundles all Node dependencies. The following system binaries must be inst
 ## Required for audio STT (Phase 6b)
 
 - **ffmpeg** (same as above — needed for audio decode)
-- STT must also be enabled in `.witsos/WitsOS.json`: `"stt": { "enabled": true }`
+- STT must be enabled in `.witsos/WitsOS.json` and configured:
+  ```json
+  "stt": {
+    "enabled": true,
+    "model": "base",
+    "maxDurationSecs": 1800
+  }
+  ```
+  - `maxDurationSecs` (default 1800 = 30 min): skip STT on longer videos to avoid blocking indexing
 
 ## Optional
 

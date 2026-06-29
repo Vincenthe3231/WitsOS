@@ -132,7 +132,7 @@ export class VideoExtractor {
       }
 
       // Try to extract audio track for STT (6c-2)
-      const audioResult = await this.extractAudio(chunkOffset);
+      const audioResult = await this.extractAudio(chunkOffset, metadata);
       if (audioResult) {
         nodes.push(...audioResult.nodes);
         edges.push(...audioResult.edges);
@@ -375,9 +375,18 @@ export class VideoExtractor {
 
   private async extractAudio(
     startChunkOffset: number,
+    metadata: { duration: number; width: number; height: number; videoCodec: string },
   ): Promise<{ nodes: Node[]; edges: Edge[]; chunks: ChunkRecord[]; nextChunkOffset: number } | null> {
     // Skip if STT is disabled
     if (!this.stt?.enabled) return null;
+
+    // Skip if video exceeds max duration cap
+    if (metadata.duration > this.stt.maxDurationSecs) {
+      logWarn(`VideoExtractor: video duration ${Math.round(metadata.duration)}s exceeds maxDurationSecs ${this.stt.maxDurationSecs}s, skipping audio transcription`, {
+        filePath: this.filePath,
+      });
+      return null;
+    }
 
     const jobId = `video-audio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 

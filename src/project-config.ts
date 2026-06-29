@@ -88,6 +88,8 @@ export interface ProjectConfig {
     minConfidence?: number;
     /** Explicit path to ffmpeg binary (falls back to ffmpeg-static / PATH). */
     ffmpegPath?: string;
+    /** Skip STT if video duration exceeds this (seconds). Default 1800 (30 min). */
+    maxDurationSecs?: number;
   };
   /**
    * Worker-pool concurrency overrides. `null` = auto (≈ CPU count for parse).
@@ -117,6 +119,7 @@ export interface SttConfig {
   diarize: boolean;
   minConfidence: number;
   ffmpegPath: string | null;
+  maxDurationSecs: number;
 }
 
 /** Validated workers config. */
@@ -153,6 +156,7 @@ const DEFAULT_STT: SttConfig = Object.freeze({
   diarize: false,
   minConfidence: 0.0,
   ffmpegPath: null,
+  maxDurationSecs: 1800,
 });
 
 /** The zero-config workers default: auto everywhere. */
@@ -323,7 +327,12 @@ function extractStt(parsed: object, file: string): SttConfig {
       ? raw.ffmpegPath.trim()
       : null;
 
-  return { enabled: true, model, modelPath, language, diarize, minConfidence, ffmpegPath };
+  const maxDurationSecs =
+    typeof raw.maxDurationSecs === 'number' && raw.maxDurationSecs > 0
+      ? raw.maxDurationSecs
+      : DEFAULT_STT.maxDurationSecs;
+
+  return { enabled: true, model, modelPath, language, diarize, minConfidence, ffmpegPath, maxDurationSecs };
 }
 
 /**
@@ -558,6 +567,7 @@ export function scaffoldProjectConfig(rootDir: string): void {
       language: 'auto',
       diarize: false,
       minConfidence: 0.0,
+      maxDurationSecs: 1800,
     },
     workers: {
       parse: null,
