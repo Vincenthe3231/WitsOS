@@ -1,4 +1,4 @@
--- CodeGraph SQLite Schema
+-- WitsOS SQLite Schema
 -- Version 1
 
 -- Schema version tracking

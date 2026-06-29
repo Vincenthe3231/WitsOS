@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { WitsOS } from '../src';
 
 /**
  * #841 — React components declared via an HOC wrapper
@@ -27,7 +27,7 @@ describe('React HOC-wrapped component recognition (#841)', () => {
   });
 
   async function index() {
-    cg = await CodeGraph.init(dir, { silent: true });
+    cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     return (cg as any).db.db;
   }

@@ -6,7 +6,7 @@
   "types": "dist/index.d.ts",
   "packageManager": "pnpm@11.0.8",
   "bin": {
-    "witsos": "./dist/bin/codegraph.js"
+    "witsos": "./dist/bin/witsos.js"
   },
   "files": [
     "dist",
@@ -14,12 +14,12 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && npm run copy-assets && node -e \"require('fs').chmodSync('dist/bin/codegraph.js', 0o755)\"",
+    "build": "tsc && npm run copy-assets && node -e \"require('fs').chmodSync('dist/bin/witsos.js', 0o755)\"",
     "build:fast": "tsc && node -e \"const fs=require('fs');fs.mkdirSync('dist/db',{recursive:true});fs.copyFileSync('src/db/schema.sql','dist/db/schema.sql');fs.mkdirSync('dist/extraction/wasm',{recursive:true});fs.readdirSync('src/extraction/wasm').filter(f=>f.endsWith('.wasm')).forEach(f=>fs.copyFileSync('src/extraction/wasm/'+f,'dist/extraction/wasm/'+f))\"",
     "preuninstall": "node dist/bin/uninstall.js",
     "copy-assets": "node -e \"const fs=require('fs');fs.mkdirSync('dist/db',{recursive:true});fs.copyFileSync('src/db/schema.sql','dist/db/schema.sql');fs.mkdirSync('dist/extraction/wasm',{recursive:true});fs.readdirSync('src/extraction/wasm').filter(f=>f.endsWith('.wasm')).forEach(f=>fs.copyFileSync('src/extraction/wasm/'+f,'dist/extraction/wasm/'+f))\"",
     "dev": "tsc --watch",
-    "cli": "npm run build && node dist/bin/codegraph.js",
+    "cli": "npm run build && node dist/bin/witsos.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:eval": "vitest run __tests__/evaluation/",

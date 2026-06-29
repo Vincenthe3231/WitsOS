@@ -1,7 +1,7 @@
 /**
  * Dynamic-boundary surfacing (#687).
  *
- * When the flow an agent asked codegraph_explore about does NOT fully connect,
+ * When the flow an agent asked witsos_explore about does NOT fully connect,
  * the Flow section announces WHERE the static path ends — the dynamic-dispatch
  * site (computed member call, getattr, typed bus, runtime-keyed emit), with
  * candidate targets when a key is statically visible — instead of silently
@@ -12,21 +12,21 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import CodeGraph from '../src/index';
+import WitsOS from '../src/index';
 import { ToolHandler } from '../src/mcp/tools';
 import { scanDynamicDispatch } from '../src/mcp/dynamic-boundaries';
 
-// These suites assert on the RAW codegraph_explore output (the Flow / boundary
+// These suites assert on the RAW witsos_explore output (the Flow / boundary
 // sections). The managed reasoning-offload, when configured on the dev machine
-// (~/.codegraph/config.json `{"offload":{"managed":true}}`), REPLACES that output
+// (~/.witsos/config.json `{"offload":{"managed":true}}`), REPLACES that output
 // with a remote Cerebras synthesis — so the structural assertions only hold with
 // the offload off. Disable it for this file so the suite is hermetic regardless
 // of machine config, then restore.
 let _prevOffloadDisable: string | undefined;
-beforeAll(() => { _prevOffloadDisable = process.env.CODEGRAPH_OFFLOAD_DISABLE; process.env.CODEGRAPH_OFFLOAD_DISABLE = '1'; });
+beforeAll(() => { _prevOffloadDisable = process.env.WITSOS_OFFLOAD_DISABLE; process.env.WITSOS_OFFLOAD_DISABLE = '1'; });
 afterAll(() => {
-  if (_prevOffloadDisable === undefined) delete process.env.CODEGRAPH_OFFLOAD_DISABLE;
-  else process.env.CODEGRAPH_OFFLOAD_DISABLE = _prevOffloadDisable;
+  if (_prevOffloadDisable === undefined) delete process.env.WITSOS_OFFLOAD_DISABLE;
+  else process.env.WITSOS_OFFLOAD_DISABLE = _prevOffloadDisable;
 });
 
 // ---------------------------------------------------------------------------
@@ -137,22 +137,22 @@ describe('scanDynamicDispatch', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration: codegraph_explore output
+// Integration: witsos_explore output
 // ---------------------------------------------------------------------------
 
-describe('codegraph_explore — dynamic boundaries', () => {
+describe('witsos_explore — dynamic boundaries', () => {
   let testDir: string;
-  let cg: CodeGraph;
+  let cg: WitsOS;
   let handler: ToolHandler;
 
   const setup = async (files: Record<string, string>, include: string[]) => {
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-boundary-'));
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'witsos-boundary-'));
     const src = path.join(testDir, 'src');
     fs.mkdirSync(src, { recursive: true });
     for (const [name, content] of Object.entries(files)) {
       fs.writeFileSync(path.join(src, name), content);
     }
-    cg = CodeGraph.initSync(testDir, { config: { include, exclude: [] } });
+    cg = WitsOS.initSync(testDir, { config: { include, exclude: [] } });
     await cg.indexAll();
     handler = new ToolHandler(cg);
   };
@@ -181,7 +181,7 @@ describe('codegraph_explore — dynamic boundaries', () => {
       ].join('\n'),
     }, ['**/*.ts']);
 
-    const res = await handler.execute('codegraph_explore', { query: 'routeSave onSave' });
+    const res = await handler.execute('witsos_explore', { query: 'routeSave onSave' });
     const text = res.content[0].text as string;
 
     expect(text).toContain('**Dynamic boundaries');
@@ -209,7 +209,7 @@ describe('codegraph_explore — dynamic boundaries', () => {
       'handlers.ts': 'export function onSave(payload: unknown) { return payload; }',
     }, ['**/*.ts']);
 
-    const res = await handler.execute('codegraph_explore', { query: 'route onSave' });
+    const res = await handler.execute('witsos_explore', { query: 'route onSave' });
     const text = res.content[0].text as string;
 
     expect(text).toContain('**Dynamic boundaries');
@@ -232,7 +232,7 @@ describe('codegraph_explore — dynamic boundaries', () => {
     }, ['**/*.ts']);
 
     // `processPayment` does not exist anywhere — only `route` resolves.
-    const res = await handler.execute('codegraph_explore', { query: 'route processPayment' });
+    const res = await handler.execute('witsos_explore', { query: 'route processPayment' });
     const text = res.content[0].text as string;
     expect(text).toContain('**Dynamic boundaries');
   });
@@ -264,7 +264,7 @@ describe('codegraph_explore — dynamic boundaries', () => {
       ].join('\n'),
     }, ['**/*.ts']);
 
-    const res = await handler.execute('codegraph_explore', { query: 'completeCheckout settleInvoice' });
+    const res = await handler.execute('witsos_explore', { query: 'completeCheckout settleInvoice' });
     const text = res.content[0].text as string;
 
     expect(text).toContain('**Dynamic-dispatch links among your symbols');
@@ -283,7 +283,7 @@ describe('codegraph_explore — dynamic boundaries', () => {
       ].join('\n'),
     }, ['**/*.ts']);
 
-    const res = await handler.execute('codegraph_explore', { query: 'stepOne stepThree' });
+    const res = await handler.execute('witsos_explore', { query: 'stepOne stepThree' });
     const text = res.content[0].text as string;
     expect(text).toContain('**Flow');
     expect(text).not.toContain('**Dynamic boundaries');
@@ -302,7 +302,7 @@ describe('codegraph_explore — dynamic boundaries', () => {
       ].join('\n'),
     }, ['**/*.py']);
 
-    const res = await handler.execute('codegraph_explore', { query: 'process handle_save' });
+    const res = await handler.execute('witsos_explore', { query: 'process handle_save' });
     const text = res.content[0].text as string;
 
     expect(text).toContain('**Dynamic boundaries');
@@ -315,19 +315,19 @@ describe('codegraph_explore — dynamic boundaries', () => {
 // Integration: interface/registry dispatch (a named method has many impls)
 // ---------------------------------------------------------------------------
 
-describe('codegraph_explore — interface dispatch', () => {
+describe('witsos_explore — interface dispatch', () => {
   let testDir: string;
-  let cg: CodeGraph;
+  let cg: WitsOS;
   let handler: ToolHandler;
 
   const setup = async (files: Record<string, string>, include: string[]) => {
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-iface-'));
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'witsos-iface-'));
     const src = path.join(testDir, 'src');
     fs.mkdirSync(src, { recursive: true });
     for (const [name, content] of Object.entries(files)) {
       fs.writeFileSync(path.join(src, name), content);
     }
-    cg = CodeGraph.initSync(testDir, { config: { include, exclude: [] } });
+    cg = WitsOS.initSync(testDir, { config: { include, exclude: [] } });
     await cg.indexAll();
     handler = new ToolHandler(cg);
   };
@@ -370,7 +370,7 @@ describe('codegraph_explore — interface dispatch', () => {
   it('announces the interface, the TRUE implementer count, and sample targets', async () => {
     await setup({ 'nodes.ts': nodeFamily(9), 'registry.ts': registry, 'engine.ts': engine }, ['**/*.ts']);
 
-    const res = await handler.execute('codegraph_explore', { query: 'processRunExecutionData executeNode execute' });
+    const res = await handler.execute('witsos_explore', { query: 'processRunExecutionData executeNode execute' });
     const text = res.content[0].text as string;
 
     expect(text).toContain('**Interface dispatch (a named method has many implementations)');
@@ -390,7 +390,7 @@ describe('codegraph_explore — interface dispatch', () => {
       ].join('\n'),
     }, ['**/*.ts']);
 
-    const res = await handler.execute('codegraph_explore', { query: 'stepOne stepThree' });
+    const res = await handler.execute('witsos_explore', { query: 'stepOne stepThree' });
     const text = res.content[0].text as string;
     expect(text).toContain('**Flow');
     expect(text).not.toContain('**Interface dispatch');
@@ -399,7 +399,7 @@ describe('codegraph_explore — interface dispatch', () => {
   it('stays SILENT when the interface family is below the polymorphism threshold (3 impls)', async () => {
     await setup({ 'nodes.ts': nodeFamily(3), 'registry.ts': registry, 'engine.ts': engine }, ['**/*.ts']);
 
-    const res = await handler.execute('codegraph_explore', { query: 'processRunExecutionData executeNode execute' });
+    const res = await handler.execute('witsos_explore', { query: 'processRunExecutionData executeNode execute' });
     const text = res.content[0].text as string;
     expect(text).not.toContain('**Interface dispatch');
   });

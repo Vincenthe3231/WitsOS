@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { WitsOS } from '../src';
 
 describe('celery-dispatch synthesizer', () => {
   let dir: string;
@@ -75,7 +75,7 @@ def handle_request(req):
 `
     );
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
 
@@ -115,7 +115,7 @@ def run():
     schedule(make_job())
 `
     );
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
     const count = db

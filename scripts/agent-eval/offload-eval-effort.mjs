@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Effort A/B — does CODEGRAPH_OFFLOAD_EFFORT=high improve offload SYNTHESIS FIDELITY vs low?
-// Probe-based (no agent): for each repo × effort × rep, run codegraph_explore with the offload
+// Effort A/B — does WITSOS_OFFLOAD_EFFORT=high improve offload SYNTHESIS FIDELITY vs low?
+// Probe-based (no agent): for each repo × effort × rep, run witsos_explore with the offload
 // ON on the canonical question, capture the synthesized answer + AI tokens/cost/latency, then
 // Sonnet-judge that answer's fidelity vs source-verified ground truth. Isolates the synthesis
-// from agent/adoption noise. Requires `codegraph login` (managed offload) + indexed repos.
+// from agent/adoption noise. Requires `witsos login` (managed offload) + indexed repos.
 //
 // Env: REPS (default 3) · CG_ENGINE (engine repo) · AGENT_EVAL_OUT (repos under /repos) · CONC (judge concurrency)
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -26,9 +26,9 @@ const TIER = { mtkruto: 'small', postybirb: 'medium', shapeshift: 'complex', tre
 const load = async (rel) => import(pathToFileURL(resolve(ENGINE, rel)).href);
 const idx = await load('dist/index.js');
 const toolsMod = await load('dist/mcp/tools.js');
-const CodeGraph = idx.default?.default ?? idx.default ?? idx.CodeGraph;
+const WitsOS = idx.default?.default ?? idx.default ?? idx.WitsOS;
 const ToolHandler = toolsMod.ToolHandler ?? toolsMod.default?.ToolHandler;
-if (typeof CodeGraph?.openSync !== 'function' || typeof ToolHandler !== 'function') {
+if (typeof WitsOS?.openSync !== 'function' || typeof ToolHandler !== 'function') {
   console.error('could not load engine from', ENGINE); process.exit(2);
 }
 
@@ -60,19 +60,19 @@ const records = [];
 for (const repo of Object.keys(GT)) {
   if (ONLY && !ONLY.has(repo)) continue;
   const dir = join(REPOS, repo);
-  if (!existsSync(join(dir, '.codegraph'))) { console.error('skip (not indexed):', repo); continue; }
-  const cg = CodeGraph.openSync(dir);
+  if (!existsSync(join(dir, '.witsos'))) { console.error('skip (not indexed):', repo); continue; }
+  const cg = WitsOS.openSync(dir);
   const h = new ToolHandler(cg);
   for (const effort of EFFORTS) {
     for (let rep = 1; rep <= REPS; rep++) {
-      process.env.CODEGRAPH_OFFLOAD_EFFORT = effort;
+      process.env.WITSOS_OFFLOAD_EFFORT = effort;
       const usageLog = join(tmpdir(), `effort-${repo}-${effort}-${rep}.jsonl`);
       try { rmSync(usageLog); } catch { /* none */ }
-      process.env.CODEGRAPH_OFFLOAD_USAGE_LOG = usageLog;
+      process.env.WITSOS_OFFLOAD_USAGE_LOG = usageLog;
       let answer = '';
-      try { answer = (await h.execute('codegraph_explore', { query: GT[repo].question }))?.content?.[0]?.text ?? ''; }
+      try { answer = (await h.execute('witsos_explore', { query: GT[repo].question }))?.content?.[0]?.text ?? ''; }
       catch (e) { console.error(`  ${repo}/${effort}#${rep} explore failed: ${e?.message}`); }
-      const fired = /Synthesized by CodeGraph/.test(answer);
+      const fired = /Synthesized by WitsOS/.test(answer);
       const ai = { tokens: 0, cost: 0, ms: 0 };
       if (existsSync(usageLog)) for (const e of readFileSync(usageLog, 'utf8').split('\n').filter(Boolean).map(JSON.parse)) {
         ai.tokens += e.totalTokens || 0; ai.cost += e.costUsd || 0; ai.ms += e.ms || 0;

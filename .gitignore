@@ -49,8 +49,8 @@ npm-debug.log*
 # public engine repo (see the IP boundary in CLAUDE.md)
 docs/business/
 
-# CodeGraph data directories (in test projects)
-.codegraph/
+# WitsOS data directories (in test projects)
+.witsos/
 
 test_frameworks
 

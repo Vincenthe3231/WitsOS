@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Offload reasoning-OUTPUT-STYLE A/B — all codegraph-on, isolating the Worker's
+# Offload reasoning-OUTPUT-STYLE A/B — all witsos-on, isolating the Worker's
 # output shape's effect on main-session tokens / latency / accuracy:
-#   raw  : CODEGRAPH_OFFLOAD_DISABLE=1            (verbatim explore source, the floor)
+#   raw  : WITSOS_OFFLOAD_DISABLE=1            (verbatim explore source, the floor)
 #   refs : managed offload, default              (Cerebras map re-expanded to verbatim, ~24K)
 #   map  : managed offload, STYLE=map            (compact reasoned map + file:line anchors, ~1-3K)
 #   src  : managed offload, STYLE=src            (map + cited line ranges only, ~1-5K)
@@ -13,7 +13,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ENGINE="$(cd "$HERE/../.." && pwd)"
-BIN="$ENGINE/dist/bin/codegraph.js"
+BIN="$ENGINE/dist/bin/witsos.js"
 OUT="${AGENT_EVAL_OUT:-/tmp/cg-offload-eval}"
 TARGET="${1:?usage: offload-eval-styles.sh <indexed-repo> <reps> \"<question>\"}"
 REPS="${2:?reps}"; Q="${3:?question}"
@@ -24,16 +24,16 @@ DISALLOW="${DISALLOW-Agent}"   # default: block delegation. `DISALLOW= ` to allo
 START="${REP_START:-1}"; END=$((START + REPS - 1))
 mkdir -p "$RUNS"
 command -v claude >/dev/null || { echo "no claude on PATH"; exit 1; }
-[ -d "$TARGET/.codegraph" ] || { echo "not indexed: $TARGET"; exit 1; }
+[ -d "$TARGET/.witsos" ] || { echo "not indexed: $TARGET"; exit 1; }
 TARGET=$(cd "$TARGET" && pwd -P)
 
 prewarm() { # path  extra-env
-  pkill -9 -f "serve --mcp --path $1" 2>/dev/null; rm -f "$1/.codegraph/daemon.sock" 2>/dev/null; sleep 0.6
-  env ${2:-} CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS=1800000 node "$BIN" serve --mcp --path "$1" </dev/null >/dev/null 2>&1 &
-  node -e 'const fs=require("fs");let n=0;const t=setInterval(()=>{if(fs.existsSync(process.argv[1]+"/.codegraph/daemon.sock")){clearInterval(t);process.exit(0)}if(n++>150){clearInterval(t);process.exit(1)}},100)' "$1" \
+  pkill -9 -f "serve --mcp --path $1" 2>/dev/null; rm -f "$1/.witsos/daemon.sock" 2>/dev/null; sleep 0.6
+  env ${2:-} WITSOS_DAEMON_IDLE_TIMEOUT_MS=1800000 node "$BIN" serve --mcp --path "$1" </dev/null >/dev/null 2>&1 &
+  node -e 'const fs=require("fs");let n=0;const t=setInterval(()=>{if(fs.existsSync(process.argv[1]+"/.witsos/daemon.sock")){clearInterval(t);process.exit(0)}if(n++>150){clearInterval(t);process.exit(1)}},100)' "$1" \
     && echo "  daemon warm" || echo "  WARN daemon never bound"
 }
-kill_daemon() { pkill -9 -f "serve --mcp --path $TARGET" 2>/dev/null; rm -f "$TARGET/.codegraph/daemon.sock" 2>/dev/null; sleep 1; }
+kill_daemon() { pkill -9 -f "serve --mcp --path $TARGET" 2>/dev/null; rm -f "$TARGET/.witsos/daemon.sock" 2>/dev/null; sleep 1; }
 
 run() { # arm rep mcp-config usage-log-or-dash
   local arm="$1" rep="$2" cfg="$3" usage="$4" tag="$REPO-$1-$2"
@@ -52,21 +52,21 @@ run() { # arm rep mcp-config usage-log-or-dash
 # MCP configs: env baked into the daemon-spawn command claude uses.
 USAGE="$RUNS/$REPO-usage.jsonl"
 mkcfg() { # file extra-env-pairs(JSON array entries, comma-led or empty)
-  printf '{"mcpServers":{"codegraph":{"command":"env","args":["CODEGRAPH_WASM_RELAUNCHED=1"%s,"node","%s","serve","--mcp","--path","%s"]}}}' "$1" "$BIN" "$TARGET"
+  printf '{"mcpServers":{"witsos":{"command":"env","args":["WITSOS_WASM_RELAUNCHED=1"%s,"node","%s","serve","--mcp","--path","%s"]}}}' "$1" "$BIN" "$TARGET"
 }
-CFG_RAW="$RUNS/mcp-sty-raw-$REPO.json";   mkcfg ',"CODEGRAPH_OFFLOAD_DISABLE=1"' > "$CFG_RAW"
-CFG_REFS="$RUNS/mcp-sty-refs-$REPO.json"; mkcfg ",\"CODEGRAPH_OFFLOAD_USAGE_LOG=$USAGE\"" > "$CFG_REFS"
-CFG_MAP="$RUNS/mcp-sty-map-$REPO.json";   mkcfg ",\"CODEGRAPH_OFFLOAD_USAGE_LOG=$USAGE\",\"CODEGRAPH_OFFLOAD_STYLE=map\"" > "$CFG_MAP"
-CFG_SRC="$RUNS/mcp-sty-src-$REPO.json";   mkcfg ",\"CODEGRAPH_OFFLOAD_USAGE_LOG=$USAGE\",\"CODEGRAPH_OFFLOAD_STYLE=src\"" > "$CFG_SRC"
+CFG_RAW="$RUNS/mcp-sty-raw-$REPO.json";   mkcfg ',"WITSOS_OFFLOAD_DISABLE=1"' > "$CFG_RAW"
+CFG_REFS="$RUNS/mcp-sty-refs-$REPO.json"; mkcfg ",\"WITSOS_OFFLOAD_USAGE_LOG=$USAGE\"" > "$CFG_REFS"
+CFG_MAP="$RUNS/mcp-sty-map-$REPO.json";   mkcfg ",\"WITSOS_OFFLOAD_USAGE_LOG=$USAGE\",\"WITSOS_OFFLOAD_STYLE=map\"" > "$CFG_MAP"
+CFG_SRC="$RUNS/mcp-sty-src-$REPO.json";   mkcfg ",\"WITSOS_OFFLOAD_USAGE_LOG=$USAGE\",\"WITSOS_OFFLOAD_STYLE=src\"" > "$CFG_SRC"
 
 echo "###### repo=$REPO reps=$START..$END model=${MODEL:-sonnet}/${EFFORT:-high} disallow=${DISALLOW:-<none>}"
 echo "###### Q=$Q"
-echo "== ARM raw ==";  prewarm "$TARGET" "CODEGRAPH_OFFLOAD_DISABLE=1"
+echo "== ARM raw ==";  prewarm "$TARGET" "WITSOS_OFFLOAD_DISABLE=1"
 for r in $(seq "$START" "$END"); do run raw  "$r" "$CFG_RAW"  "-"; done; kill_daemon
-echo "== ARM refs =="; prewarm "$TARGET" "CODEGRAPH_OFFLOAD_USAGE_LOG=$USAGE"
+echo "== ARM refs =="; prewarm "$TARGET" "WITSOS_OFFLOAD_USAGE_LOG=$USAGE"
 for r in $(seq "$START" "$END"); do run refs "$r" "$CFG_REFS" "$USAGE"; done; kill_daemon
-echo "== ARM map ==";  prewarm "$TARGET" "CODEGRAPH_OFFLOAD_USAGE_LOG=$USAGE CODEGRAPH_OFFLOAD_STYLE=map"
+echo "== ARM map ==";  prewarm "$TARGET" "WITSOS_OFFLOAD_USAGE_LOG=$USAGE WITSOS_OFFLOAD_STYLE=map"
 for r in $(seq "$START" "$END"); do run map  "$r" "$CFG_MAP"  "$USAGE"; done; kill_daemon
-echo "== ARM src ==";  prewarm "$TARGET" "CODEGRAPH_OFFLOAD_USAGE_LOG=$USAGE CODEGRAPH_OFFLOAD_STYLE=src"
+echo "== ARM src ==";  prewarm "$TARGET" "WITSOS_OFFLOAD_USAGE_LOG=$USAGE WITSOS_OFFLOAD_STYLE=src"
 for r in $(seq "$START" "$END"); do run src  "$r" "$CFG_SRC"  "$USAGE"; done; kill_daemon
 echo "###### DONE $REPO — judge: node $HERE/offload-eval-judge.mjs --results $RESULTS --truth $HERE/offload-eval-ground-truth.json --out $OUT/judged-styles.jsonl"

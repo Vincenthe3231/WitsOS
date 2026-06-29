@@ -1,7 +1,7 @@
 /**
  * `index` / `init` command supervision regression test (#999, secondary issues).
  *
- * `codegraph index` runs in a child re-exec'd with `--liftoff-only` whose parent
+ * `witsos index` runs in a child re-exec'd with `--liftoff-only` whose parent
  * blocks in `spawnSync` and so cannot forward a signal — when the parent shim is
  * killed the indexer used to keep running, orphaned, pinning a CPU core. The
  * `#850` liveness watchdog and `#277` ppid watchdog were also wired only into
@@ -60,8 +60,8 @@ describe.skipIf(process.platform === 'win32')('index/init orphan supervision (#9
     // The child stands in for a running indexer: it installs the SAME command
     // supervision `index`/`init` install, then idles on a ref'd timer so it
     // stays alive until the watchdog (not the timer) takes it down.
-    // CODEGRAPH_NO_WATCHDOG=1 isolates the ppid (orphan) path from the liveness
-    // child; CODEGRAPH_PPID_POLL_MS=200 keeps it responsive in test.
+    // WITSOS_NO_WATCHDOG=1 isolates the ppid (orphan) path from the liveness
+    // child; WITSOS_PPID_POLL_MS=200 keeps it responsive in test.
     const childSrc = `
       const { installCommandSupervision } = require(${JSON.stringify(SUPERVISION)});
       installCommandSupervision('index');
@@ -77,7 +77,7 @@ describe.skipIf(process.platform === 'win32')('index/init orphan supervision (#9
       const errFd = fs.openSync(${JSON.stringify(stderrLog)}, 'a');
       const child = spawn(process.execPath, ['-e', ${JSON.stringify(childSrc)}], {
         stdio: ['ignore', 'pipe', errFd],
-        env: { ...process.env, CODEGRAPH_NO_WATCHDOG: '1', CODEGRAPH_PPID_POLL_MS: '200', CODEGRAPH_WASM_RELAUNCHED: '1' },
+        env: { ...process.env, WITSOS_NO_WATCHDOG: '1', WITSOS_PPID_POLL_MS: '200', WITSOS_WASM_RELAUNCHED: '1' },
         detached: true,
       });
       child.unref();

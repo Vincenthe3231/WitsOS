@@ -44,17 +44,17 @@ for (const line of lines) {
         ? b.content.map(c => (typeof c === 'string' ? c : c.text || '')).join('')
         : (typeof b.content === 'string' ? b.content : '');
       // An offload answer is either the 'plain'/'report' synthesis (carries the
-      // "Synthesized by CodeGraph" footer) or a 'refs' answer (carries the re-expanded
+      // "Synthesized by WitsOS" footer) or a 'refs' answer (carries the re-expanded
       // "### Referenced source — verbatim" appendix). A refs call that cited nothing
       // valid falls back to RAW source, which is correctly counted as a raw explore below.
-      if (/Synthesized by CodeGraph|### Referenced source — verbatim/.test(text)) { offloadAnswers.push(text); exploreResults++; }
+      if (/Synthesized by WitsOS|### Referenced source — verbatim/.test(text)) { offloadAnswers.push(text); exploreResults++; }
       else if (/Found \d+ symbols? across|\*\*Exploration:/.test(text)) exploreResults++;
     }
   }
   if (ev.type === 'result') result = ev;
 }
 
-// offload usage sidecar (CodeGraph AI tokens + cost) — one JSON line per offload call
+// offload usage sidecar (WitsOS AI tokens + cost) — one JSON line per offload call
 const ai = { calls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, credits: 0, costUsd: 0, ms: 0 };
 if (args.usage && args.usage !== '-' && existsSync(args.usage)) {
   for (const line of readFileSync(args.usage, 'utf8').split('\n').filter(Boolean)) {
@@ -74,8 +74,8 @@ const frontload = lines.some(l => l.includes('auto-retrieved for this question')
 const get = (n) => toolCounts[n] || 0;
 const read = get('Read');
 const grep = get('Grep') + get('Bash') + get('Glob');
-const explore = get('mcp__codegraph__codegraph_explore');
-const cgAny = Object.keys(toolCounts).filter(k => /mcp__codegraph__/.test(k)).reduce((s, k) => s + toolCounts[k], 0);
+const explore = get('mcp__witsos__witsos_explore');
+const cgAny = Object.keys(toolCounts).filter(k => /mcp__witsos__/.test(k)).reduce((s, k) => s + toolCounts[k], 0);
 
 const out = {
   repo: args.repo, tier: args.tier, arm: args.arm, rep: Number(args.rep), question: args.q,

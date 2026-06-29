@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { connectWithHello } from '../src/mcp/proxy';
-import { CodeGraphPackageVersion } from '../src/mcp/version';
+import { WitsOSPackageVersion } from '../src/mcp/version';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -34,7 +34,7 @@ async function fakeDaemon(version: string): Promise<{ sockPath: string; server: 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-proxy-'));
   const sockPath = path.join(dir, 'd.sock');
   const server = net.createServer((socket) => {
-    const hello = { codegraph: version, pid: process.pid, socketPath: sockPath, protocol: 1 };
+    const hello = { witsos: version, pid: process.pid, socketPath: sockPath, protocol: 1 };
     socket.write(JSON.stringify(hello) + '\n');
   });
   await new Promise<void>((resolve) => server.listen(sockPath, resolve));
@@ -45,7 +45,7 @@ async function fakeDaemon(version: string): Promise<{ sockPath: string; server: 
 
 describe('connectWithHello — socket is never left without an error listener (#974)', () => {
   it.runIf(process.platform !== 'win32')('returns a socket that has an error listener and never throws on error', async () => {
-    const { sockPath } = await fakeDaemon(CodeGraphPackageVersion);
+    const { sockPath } = await fakeDaemon(WitsOSPackageVersion);
 
     const result = await connectWithHello(sockPath);
     expect(result).not.toBeNull();

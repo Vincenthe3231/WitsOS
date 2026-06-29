@@ -1,5 +1,5 @@
 /**
- * codegraph_explore — multi-term corroboration tier (cross-layer monorepo ranking).
+ * witsos_explore — multi-term corroboration tier (cross-layer monorepo ranking).
  *
  * BEHAVIOURAL coverage for the `isCorroborated` tier in handleExplore's file sort:
  * a backend file that is BOTH an entry/central file AND matched by >=2 DISTINCT
@@ -25,7 +25,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import CodeGraph from '../src/index';
+import WitsOS from '../src/index';
 import { ToolHandler } from '../src/mcp/tools';
 
 /** Paths that explore rendered as full-body ``**`<path>`** —`` source sections.
@@ -39,13 +39,13 @@ function sourcedFiles(text: string): string[] {
   return out;
 }
 
-describe('codegraph_explore — multi-term corroboration tier', () => {
+describe('witsos_explore — multi-term corroboration tier', () => {
   let testDir: string;
-  let cg: CodeGraph;
+  let cg: WitsOS;
   let handler: ToolHandler;
 
   beforeEach(async () => {
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-corrob-'));
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'witsos-corrob-'));
 
     // --- The large, internally DENSE frontend layer ---------------------------
     // Many `app/` files whose SYMBOLS all match the word "item" and form a tight
@@ -89,7 +89,7 @@ describe('codegraph_explore — multi-term corroboration tier', () => {
       `  load(): string[] { return []; }\n` +
       `}\n`);
 
-    cg = CodeGraph.initSync(testDir, { config: { include: ['**/*.ts'], exclude: [] } });
+    cg = WitsOS.initSync(testDir, { config: { include: ['**/*.ts'], exclude: [] } });
     await cg.indexAll();
     handler = new ToolHandler(cg);
   });
@@ -100,7 +100,7 @@ describe('codegraph_explore — multi-term corroboration tier', () => {
   });
 
   it('sources the corroborated backend file alongside a denser frontend cluster in a multi-layer repo', async () => {
-    const res = await handler.execute('codegraph_explore', { query: 'item service' });
+    const res = await handler.execute('witsos_explore', { query: 'item service' });
     const text = res.content[0].text;
     const sourced = sourcedFiles(text);
 
@@ -112,7 +112,7 @@ describe('codegraph_explore — multi-term corroboration tier', () => {
   it('still leads with the backend file when the query names its symbol directly', async () => {
     // A query naming the backend symbol directly: the answer is the DataService
     // file; the frontend mesh stays subordinate (it matches only "item").
-    const res = await handler.execute('codegraph_explore', { query: 'DataService read load' });
+    const res = await handler.execute('witsos_explore', { query: 'DataService read load' });
     const text = res.content[0].text;
     const sourced = sourcedFiles(text);
     expect(sourced).toContain('api/item/service.ts');

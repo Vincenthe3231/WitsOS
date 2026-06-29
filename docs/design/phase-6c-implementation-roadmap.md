@@ -2,7 +2,7 @@
 
 **Status:** Starting preconditions (P1–P5), then 6c-1 (metadata+subtitles).
 
-**Verified against:** LAST_SESSION_PLAN.md + live CodeGraph index (323 files, 5137 nodes).
+**Verified against:** LAST_SESSION_PLAN.md + live WitsOS index (323 files, 5137 nodes).
 
 ---
 
@@ -142,7 +142,7 @@
 - [ ] **P3:** TempFileMgr cleanup tested on crash/cancel/timeout
 - [ ] **P4:** Long-audio (1hr+) indexes without OOM; keyframes streamed to temp
 - [ ] **P5:** callers/callees/impact exclude document/section; success-shaped response
-- [ ] **Code regression:** `codegraph_status` node/edge count byte-identical
+- [ ] **Code regression:** `witsos_status` node/edge count byte-identical
 
 ---
 

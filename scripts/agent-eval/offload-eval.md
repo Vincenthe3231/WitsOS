@@ -1,8 +1,8 @@
-# CodeGraph AI offload — accuracy & adoption eval harness
+# WitsOS AI offload — accuracy & adoption eval harness
 
-Measures the managed **offload** (`codegraph_explore` → reasoning model synthesis) and the
-**front-load hook** (approach 1) against plain codegraph and no-codegraph, across repo sizes,
-on **time · main-session tokens/cost · CodeGraph-AI tokens/cost · accuracy**.
+Measures the managed **offload** (`witsos_explore` → reasoning model synthesis) and the
+**front-load hook** (approach 1) against plain witsos and no-witsos, across repo sizes,
+on **time · main-session tokens/cost · WitsOS-AI tokens/cost · accuracy**.
 
 All agent arms run `claude -p --model sonnet --effort high` (the deliberate floor model — an
 affordance that lands on Sonnet generalizes up). Everything writes to a scratch dir
@@ -11,7 +11,7 @@ affordance that lands on Sonnet generalizes up). Everything writes to a scratch 
 ## Repos (selected via a memory-probe gate — NOT trained on)
 
 Famous repos (express, excalidraw, n8n, …) are useless for *accuracy* evals: Sonnet answers their
-flow questions from memory, so the no-codegraph baseline is dishonest. These four passed a no-tools
+flow questions from memory, so the no-witsos baseline is dishonest. These four passed a no-tools
 probe (Sonnet could not name their real flow internals) and are cloned fresh by `offload-eval-setup.sh`:
 
 | tier | repo | ~src files | canonical flow |
@@ -25,16 +25,16 @@ Verified ground-truth flows (the judge's reference) live in `offload-eval-ground
 
 ## Arms
 
-- **offload** — codegraph + managed offload ON (requires `codegraph login`); records AI tokens/credits via `CODEGRAPH_OFFLOAD_USAGE_LOG`.
-- **raw** — codegraph, `CODEGRAPH_OFFLOAD_DISABLE=1` (returns raw source).
+- **offload** — witsos + managed offload ON (requires `witsos login`); records AI tokens/credits via `WITSOS_OFFLOAD_USAGE_LOG`.
+- **raw** — witsos, `WITSOS_OFFLOAD_DISABLE=1` (returns raw source).
 - **nocg** — empty MCP config; Read/Grep baseline.
-- **frontload** — codegraph (offload-disabled) + a `UserPromptSubmit` hook (`offload-eval-hook.mjs`) that runs raw explore on the prompt and injects the result into context (approach 1).
+- **frontload** — witsos (offload-disabled) + a `UserPromptSubmit` hook (`offload-eval-hook.mjs`) that runs raw explore on the prompt and injects the result into context (approach 1).
 
 ## Run it
 
 ```bash
 npm run build                       # the harness shells out to dist/
-codegraph login                     # only needed for the offload arm
+witsos login                     # only needed for the offload arm
 export AGENT_EVAL_OUT=/tmp/cg-offload-eval
 
 bash scripts/agent-eval/offload-eval-setup.sh            # clone + index the 4 repos
@@ -63,7 +63,7 @@ Single repo: `offload-eval-3arm.sh <indexed-repo> <tier> <reps> "<question>"` (o
 
 ## Findings (2026-06, n=3 — direction consistent, magnitudes noisy)
 
-- **Raw codegraph is the efficiency win** — ~nocg accuracy, fewer reads, faster, no AI cost.
+- **Raw witsos is the efficiency win** — ~nocg accuracy, fewer reads, faster, no AI cost.
 - **The offload is the least-accurate arm in all 4 tiers** — synthesized fidelity 12–27/100 with
   fabrication in 3/4 (e.g. invented website services; traced `ClientPlain`/`SessionPlain` instead of
   the real encrypted path). Its speed/cost win is narrow (medium-only) and inversely correlated with

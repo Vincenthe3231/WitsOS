@@ -2,7 +2,7 @@
 // Cost/token analysis for the 3-arm offload eval, with a MAIN-vs-SUBAGENT split.
 //
 // The explore-subagent question. With delegation ALLOWED, the nocg arm spawns a
-// Claude Code Explore subagent; the codegraph arms do all work in the main agent.
+// Claude Code Explore subagent; the witsos arms do all work in the main agent.
 // Two facts make naive accounting wrong:
 //   1. The Explore subagent runs on HAIKU 4.5; the main agent on SONNET 4.6.
 //      So per-token cost differs ~3x between them — you cannot price both the same.
@@ -87,7 +87,7 @@ console.log('arm      rep | subAg | MAIN(sonnet) tok / $ | SUB(haiku) tok / $   
 for (const arm of ARMS) for (const r of byArm[arm]) {
   const mC = cost(r.main), sC = cost(r.sub), mT = tot(r.main), sT = tot(r.sub);
   const reads = r.tools['Read'] || 0, grep = (r.tools['Grep']||0)+(r.tools['Bash']||0)+(r.tools['Glob']||0);
-  const explore = r.tools['mcp__codegraph__codegraph_explore'] || 0;
+  const explore = r.tools['mcp__witsos__witsos_explore'] || 0;
   const delta = (mC + sC) - (r.ccTotal || 0); // should be ~0
   console.log(
     `${arm.padEnd(8)} #${r.rep} | ${String(r.subagents).padStart(2)}    | ${k(mT)} ${d(mC).padStart(7)}     | ${k(sT)} ${d(sC).padStart(7)}     | ${k(mT+sT)} ${d(mC+sC).padStart(7)} | ${d(r.ccTotal||0).padStart(7)} ${(delta>=0?'+':'')+delta.toFixed(4)} | ${String(r.durationSec).padStart(5)} r=${reads} g=${grep} x=${explore}`

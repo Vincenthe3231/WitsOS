@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { WitsOS } from '../src';
 
 describe('laravel-event synthesizer', () => {
   let dir: string;
@@ -118,7 +118,7 @@ class SongService {
 }
 `);
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
 
@@ -157,7 +157,7 @@ class Client {
     public function send(string $url): string { return $url; }
 }
 `);
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
     const count = db

@@ -1,10 +1,10 @@
 /**
  * Deleted-but-open DB inode self-heal (issue #925).
  *
- * A long-lived process (the MCP daemon) opens `.codegraph/codegraph.db` and
- * holds the file descriptor for its whole life. If `.codegraph/` is removed and
+ * A long-lived process (the MCP daemon) opens `.witsos/witsos.db` and
+ * holds the file descriptor for its whole life. If `.witsos/` is removed and
  * recreated AT THE SAME PATH while it's running — `git worktree remove <p>` then
- * `git worktree add <p>` + `codegraph init`, or `rm -rf .codegraph` + re-init —
+ * `git worktree add <p>` + `witsos init`, or `rm -rf .witsos` + re-init —
  * the held fd points at the now-unlinked inode and can never see the new index.
  * Queries then return the pre-removal snapshot until the process restarts; the
  * CLI (a fresh process) reads the new inode and diverges.
@@ -19,8 +19,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { DatabaseConnection } from '../src/db';
-import { getCodeGraphDir } from '../src/directory';
-import CodeGraph from '../src/index';
+import { getWitsOSDir } from '../src/directory';
+import WitsOS from '../src/index';
 
 const posixOnly = it.runIf(process.platform !== 'win32');
 const windowsOnly = it.runIf(process.platform === 'win32');
@@ -32,7 +32,7 @@ describe('DatabaseConnection.isReplacedOnDisk (issue #925)', () => {
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-925-db-'));
-    dbPath = path.join(dir, 'codegraph.db');
+    dbPath = path.join(dir, 'witsos.db');
     conn = DatabaseConnection.initialize(dbPath);
   });
 
@@ -64,7 +64,7 @@ describe('DatabaseConnection.isReplacedOnDisk (issue #925)', () => {
   });
 });
 
-describe('CodeGraph.reopenIfReplaced (issue #925)', () => {
+describe('WitsOS.reopenIfReplaced (issue #925)', () => {
   let root: string;
 
   beforeEach(() => {
@@ -79,17 +79,17 @@ describe('CodeGraph.reopenIfReplaced (issue #925)', () => {
 
   posixOnly('heals a held connection after the index is removed and recreated at the same path', async () => {
     // The "server" opens and holds the DB for its lifetime.
-    const server = CodeGraph.initSync(root);
+    const server = WitsOS.initSync(root);
     await server.indexAll();
     expect(server.searchNodes('fooOld').length).toBeGreaterThan(0);
     expect(server.searchNodes('fooNew').length).toBe(0);
 
-    // Simulate `git worktree remove` + re-add (or rm -rf .codegraph + init):
+    // Simulate `git worktree remove` + re-add (or rm -rf .witsos + init):
     // a NEW index inode at the same path, carrying a renamed symbol, written by
-    // a separate instance (mirrors a fresh `codegraph init` process).
-    fs.rmSync(getCodeGraphDir(root), { recursive: true, force: true });
+    // a separate instance (mirrors a fresh `witsos init` process).
+    fs.rmSync(getWitsOSDir(root), { recursive: true, force: true });
     fs.writeFileSync(path.join(root, 'src', 'a.ts'), 'export function fooNew() { return 2; }\n');
-    const fresh = CodeGraph.initSync(root);
+    const fresh = WitsOS.initSync(root);
     await fresh.indexAll();
     fresh.destroy();
 
@@ -109,7 +109,7 @@ describe('CodeGraph.reopenIfReplaced (issue #925)', () => {
   });
 
   posixOnly('is a no-op (returns false) when the index has not been replaced', async () => {
-    const server = CodeGraph.initSync(root);
+    const server = WitsOS.initSync(root);
     await server.indexAll();
     expect(server.reopenIfReplaced()).toBe(false);
     server.destroy();

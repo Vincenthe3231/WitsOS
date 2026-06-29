@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot CodeGraph quality audit:
+# One-shot WitsOS quality audit:
 #   set version -> ensure corpus repo -> wipe+reindex with that version ->
 #   run with/without A/B -> restore the local dev link.
 #
@@ -8,7 +8,7 @@
 #   <repo-name>  dir name under the corpus dir
 #   <repo-url>   git URL (cloned --depth 1 when the repo dir is missing)
 #   [mode]       headless (default) | all (also the interactive tmux arms)
-# Env: CORPUS  corpus dir (default: /tmp/codegraph-corpus)
+# Env: CORPUS  corpus dir (default: /tmp/witsos-corpus)
 set -uo pipefail
 
 VERSION="${1:?usage: audit.sh <version> <repo-name> <repo-url> \"<question>\" [mode]}"
@@ -18,16 +18,16 @@ Q="${4:?question required}"
 MODE="${5:-headless}"
 
 HARNESS="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$HARNESS/../.." && pwd)"     # codegraph repo root
-CORPUS="${CORPUS:-/tmp/codegraph-corpus}"
+REPO_ROOT="$(cd "$HARNESS/../.." && pwd)"     # witsos repo root
+CORPUS="${CORPUS:-/tmp/witsos-corpus}"
 REPO="$CORPUS/$NAME"
-PKG="@colbymchenry/codegraph"
+PKG="@colbymchenry/witsos"
 
-echo "==================== CodeGraph audit ===================="
+echo "==================== WitsOS audit ===================="
 echo "version=$VERSION  repo=$NAME  mode=$MODE  corpus=$CORPUS"
 echo
 
-# 1. Set the codegraph version under test (mutates the global install).
+# 1. Set the witsos version under test (mutates the global install).
 if [ "$VERSION" = local ]; then
   echo "→ [1/4] building + linking local dev build (local-install.sh)"
   ( cd "$REPO_ROOT" && ./scripts/local-install.sh ) || { echo "local-install.sh failed"; exit 1; }
@@ -35,8 +35,8 @@ else
   echo "→ [1/4] installing $PKG@$VERSION globally"
   npm install -g "$PKG@$VERSION" || { echo "npm install -g $PKG@$VERSION failed"; exit 1; }
 fi
-ACTUAL="$(codegraph --version 2>/dev/null || echo '?')"
-echo "  codegraph on PATH: $(command -v codegraph) -> $ACTUAL"
+ACTUAL="$(witsos --version 2>/dev/null || echo '?')"
+echo "  witsos on PATH: $(command -v witsos) -> $ACTUAL"
 
 # 2. Ensure the corpus repo exists (clone shallow if missing, reuse if present).
 mkdir -p "$CORPUS"
@@ -49,9 +49,9 @@ fi
 
 # 3. Wipe + re-index with THIS version (the index must be built by the same
 #    binary that serves it — different versions extract differently).
-echo "→ [3/4] wiping .codegraph and re-indexing with $ACTUAL"
-rm -rf "$REPO/.codegraph"
-( cd "$REPO" && codegraph init -i ) || { echo "indexing failed"; exit 1; }
+echo "→ [3/4] wiping .witsos and re-indexing with $ACTUAL"
+rm -rf "$REPO/.witsos"
+( cd "$REPO" && witsos init -i ) || { echo "indexing failed"; exit 1; }
 
 # 4. Run the with/without A/B.
 echo "→ [4/4] running A/B harness (mode=$MODE)"
@@ -61,7 +61,7 @@ bash "$HARNESS/run-all.sh" "$REPO" "$Q" "$MODE"
 echo
 echo "→ restoring local dev link (local-install.sh)"
 if ( cd "$REPO_ROOT" && ./scripts/local-install.sh >/dev/null 2>&1 ); then
-  echo "  global codegraph restored to dev build"
+  echo "  global witsos restored to dev build"
 else
   echo "  WARN: restore failed — run ./scripts/local-install.sh manually"
 fi

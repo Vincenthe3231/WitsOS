@@ -1,5 +1,5 @@
 /**
- * `codegraph.json` `includeIgnored` loader (#970, #976 / #622, #699).
+ * `witsos.json` `includeIgnored` loader (#970, #976 / #622, #699).
  *
  * Parsing, validation, and mtime-caching of the opt-in patterns that re-include
  * gitignored directories for embedded-repo discovery. The behavioral end of this
@@ -16,7 +16,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { loadIncludeIgnoredPatterns, loadExtensionOverrides, clearProjectConfigCache } from '../src/project-config';
 
-describe('includeIgnored loader (codegraph.json)', () => {
+describe('includeIgnored loader (witsos.json)', () => {
   let dir: string;
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-includeignored-'));
@@ -28,11 +28,11 @@ describe('includeIgnored loader (codegraph.json)', () => {
   });
   const writeConfig = (obj: unknown) =>
     fs.writeFileSync(
-      path.join(dir, 'codegraph.json'),
+      path.join(dir, 'witsos.json'),
       typeof obj === 'string' ? obj : JSON.stringify(obj)
     );
 
-  it('returns an empty list when there is no codegraph.json (the default)', () => {
+  it('returns an empty list when there is no witsos.json (the default)', () => {
     expect(loadIncludeIgnoredPatterns(dir)).toEqual([]);
   });
 
@@ -74,7 +74,7 @@ describe('includeIgnored loader (codegraph.json)', () => {
     writeConfig({ includeIgnored: ['services/'] });
     // Force a distinct mtime in case the filesystem clock is coarse.
     const future = new Date(Date.now() + 2000);
-    fs.utimesSync(path.join(dir, 'codegraph.json'), future, future);
+    fs.utimesSync(path.join(dir, 'witsos.json'), future, future);
 
     expect(loadIncludeIgnoredPatterns(dir)).toEqual(['services/']);
   });
@@ -83,7 +83,7 @@ describe('includeIgnored loader (codegraph.json)', () => {
     writeConfig({ includeIgnored: ['packages/'] });
     expect(loadIncludeIgnoredPatterns(dir)).toEqual(['packages/']);
 
-    fs.rmSync(path.join(dir, 'codegraph.json'));
+    fs.rmSync(path.join(dir, 'witsos.json'));
     expect(loadIncludeIgnoredPatterns(dir)).toEqual([]);
   });
 });

@@ -1,7 +1,7 @@
 /**
  * Front-load hook project resolution (#964).
  *
- * The Claude `UserPromptSubmit` front-load hook must inject CodeGraph context
+ * The Claude `UserPromptSubmit` front-load hook must inject WitsOS context
  * for the RIGHT project — including the monorepo case where the agent's cwd is
  * an un-indexed workspace root and the index lives in a sub-project. These test
  * `planFrontload` / `findIndexedSubprojectRoots` directly (the hook's decision
@@ -14,10 +14,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { planFrontload, findIndexedSubprojectRoots, isStructuralPrompt, hasStructuralKeyword, extractCodeTokens } from '../src/directory';
 
-/** Make `dir` look indexed (isInitialized needs `.codegraph/codegraph.db`). */
+/** Make `dir` look indexed (isInitialized needs `.witsos/witsos.db`). */
 function mkIndexed(dir: string): string {
-  fs.mkdirSync(path.join(dir, '.codegraph'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.codegraph', 'codegraph.db'), '');
+  fs.mkdirSync(path.join(dir, '.witsos'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.witsos', 'witsos.db'), '');
   return dir;
 }
 /** A workspace-root manifest so the down-scan gate (looksLikeProjectRoot) passes. */

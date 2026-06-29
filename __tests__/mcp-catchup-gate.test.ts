@@ -19,16 +19,16 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import CodeGraph from '../src/index';
+import WitsOS from '../src/index';
 import { ToolHandler } from '../src/mcp/tools';
 
 describe('MCP catch-up gate', () => {
   let testDir: string;
-  let cg: CodeGraph;
+  let cg: WitsOS;
   let handler: ToolHandler;
 
   beforeEach(async () => {
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-catchup-gate-'));
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'witsos-catchup-gate-'));
     fs.mkdirSync(path.join(testDir, 'src'));
     fs.writeFileSync(
       path.join(testDir, 'src', 'survivor.ts'),
@@ -39,7 +39,7 @@ describe('MCP catch-up gate', () => {
       'export function deletedLater() { return 2; }\n',
     );
 
-    cg = CodeGraph.initSync(testDir, { config: { include: ['**/*.ts'], exclude: [] } });
+    cg = WitsOS.initSync(testDir, { config: { include: ['**/*.ts'], exclude: [] } });
     await cg.indexAll();
     handler = new ToolHandler(cg);
   });
@@ -57,7 +57,7 @@ describe('MCP catch-up gate', () => {
     });
     handler.setCatchUpGate(gate);
 
-    const res = await handler.execute('codegraph_search', { query: 'survivor' });
+    const res = await handler.execute('witsos_search', { query: 'survivor' });
     expect(gateResolved).toBe(true);
     expect(res.isError).toBeFalsy();
     expect(res.content[0].text).toMatch(/survivor/);
@@ -71,9 +71,9 @@ describe('MCP catch-up gate', () => {
     });
     handler.setCatchUpGate(gate);
 
-    await handler.execute('codegraph_search', { query: 'survivor' });
+    await handler.execute('witsos_search', { query: 'survivor' });
     const before = awaitCount;
-    await handler.execute('codegraph_search', { query: 'survivor' });
+    await handler.execute('witsos_search', { query: 'survivor' });
     // The promise body runs once when constructed; second execute never
     // resubscribes to a fresh promise because the gate field was nulled.
     expect(awaitCount).toBe(before);
@@ -90,7 +90,7 @@ describe('MCP catch-up gate', () => {
     // uses (`cg.sync()` returns a Promise<SyncResult>, the wrapper voids it).
     handler.setCatchUpGate(cg.sync().then(() => undefined));
 
-    const res = await handler.execute('codegraph_search', { query: 'deletedLater' });
+    const res = await handler.execute('witsos_search', { query: 'deletedLater' });
     expect(res.isError).toBeFalsy();
     const text = res.content[0].text;
     expect(text).not.toMatch(/src\/deleted-later\.ts/);
@@ -105,7 +105,7 @@ describe('MCP catch-up gate', () => {
 
     handler.setCatchUpGate(cg.sync().then(() => undefined));
 
-    const res = await handler.execute('codegraph_search', { query: 'survivor' });
+    const res = await handler.execute('witsos_search', { query: 'survivor' });
     expect(res.isError).toBeFalsy();
     expect(cg.getStats().fileCount).toBe(0);
   });
@@ -115,8 +115,8 @@ describe('MCP catch-up gate', () => {
     // and gating the first tool call on all of it reads as a multi-minute hang.
     // With the time-box, the call is served promptly and the reconcile finishes
     // in the background.
-    const prev = process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS;
-    process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS = '50';
+    const prev = process.env.WITSOS_CATCHUP_GATE_TIMEOUT_MS;
+    process.env.WITSOS_CATCHUP_GATE_TIMEOUT_MS = '50';
     let timer: NodeJS.Timeout | undefined;
     try {
       let gateResolved = false;
@@ -126,7 +126,7 @@ describe('MCP catch-up gate', () => {
       handler.setCatchUpGate(gate);
 
       const started = Date.now();
-      const res = await handler.execute('codegraph_search', { query: 'survivor' });
+      const res = await handler.execute('witsos_search', { query: 'survivor' });
       const elapsed = Date.now() - started;
 
       expect(res.isError).toBeFalsy();
@@ -136,14 +136,14 @@ describe('MCP catch-up gate', () => {
       expect(elapsed).toBeLessThan(2000);
     } finally {
       if (timer) clearTimeout(timer);
-      if (prev === undefined) delete process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS;
-      else process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS = prev;
+      if (prev === undefined) delete process.env.WITSOS_CATCHUP_GATE_TIMEOUT_MS;
+      else process.env.WITSOS_CATCHUP_GATE_TIMEOUT_MS = prev;
     }
   });
 
-  it('CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS=0 restores the unbounded wait', async () => {
-    const prev = process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS;
-    process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS = '0';
+  it('WITSOS_CATCHUP_GATE_TIMEOUT_MS=0 restores the unbounded wait', async () => {
+    const prev = process.env.WITSOS_CATCHUP_GATE_TIMEOUT_MS;
+    process.env.WITSOS_CATCHUP_GATE_TIMEOUT_MS = '0';
     try {
       let gateResolved = false;
       const gate = new Promise<void>((resolve) => {
@@ -151,13 +151,13 @@ describe('MCP catch-up gate', () => {
       });
       handler.setCatchUpGate(gate);
 
-      const res = await handler.execute('codegraph_search', { query: 'survivor' });
+      const res = await handler.execute('witsos_search', { query: 'survivor' });
       // With the time-box disabled, the call waits for the full reconcile.
       expect(gateResolved).toBe(true);
       expect(res.isError).toBeFalsy();
     } finally {
-      if (prev === undefined) delete process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS;
-      else process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS = prev;
+      if (prev === undefined) delete process.env.WITSOS_CATCHUP_GATE_TIMEOUT_MS;
+      else process.env.WITSOS_CATCHUP_GATE_TIMEOUT_MS = prev;
     }
   });
 
@@ -166,7 +166,7 @@ describe('MCP catch-up gate', () => {
     // not poison tool dispatch — the engine logs it, the handler proceeds.
     handler.setCatchUpGate(Promise.reject(new Error('simulated sync failure')));
 
-    const res = await handler.execute('codegraph_search', { query: 'survivor' });
+    const res = await handler.execute('witsos_search', { query: 'survivor' });
     expect(res.isError).toBeFalsy();
     expect(res.content[0].text).toMatch(/survivor/);
   });

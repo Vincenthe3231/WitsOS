@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Reproduction harness B — the FAITHFUL opencode scenario.
 //
-// Spawns N real `codegraph serve --mcp --path <repo>` processes (each becomes a
+// Spawns N real `witsos serve --mcp --path <repo>` processes (each becomes a
 // proxy that attaches to ONE shared daemon — exactly what opencode does with N
 // subagents), drives clean MCP JSON-RPC over each child's stdio, then fires ONE
-// concurrent wave of codegraph_explore tools/call across all N and measures
+// concurrent wave of witsos_explore tools/call across all N and measures
 // end-to-end latency + timeouts. This captures transport-flush starvation: a
 // daemon event-loop blocked in synchronous explore compute can neither read the
 // next request nor flush a finished response.
@@ -19,7 +19,7 @@ const repo = resolve(repoRaw || '.');
 const N = Number(nRaw) || 10;
 const TIMEOUT_MS = Number(timeoutRaw) || 60000;
 const WARM = warmRaw === undefined ? true : warmRaw !== '0';
-const CLI = resolve('dist/bin/codegraph.js');
+const CLI = resolve('dist/bin/witsos.js');
 
 const QUERIES = [
   'how does the text model handle edits and undo',
@@ -38,7 +38,7 @@ const QUERIES = [
 
 function makeClient(id) {
   const child = spawn('node', [CLI, 'serve', '--mcp', '--path', repo], {
-    env: { ...process.env, CODEGRAPH_TELEMETRY: '0', DO_NOT_TRACK: '1', CODEGRAPH_MCP_LOG_ATTACH: '0' },
+    env: { ...process.env, WITSOS_TELEMETRY: '0', DO_NOT_TRACK: '1', WITSOS_MCP_LOG_ATTACH: '0' },
     stdio: ['pipe', 'pipe', 'inherit'],
   });
   let buf = '';
@@ -85,7 +85,7 @@ await Promise.all(clients.map((c) =>
 if (WARM) {
   process.stderr.write('[repro] warming daemon (first explore triggers spawn+open+catchup)...\n');
   const t0 = performance.now();
-  const r = await clients[0].request('tools/call', { name: 'codegraph_explore', arguments: { query: QUERIES[0] } }, 'warm-0', 120000);
+  const r = await clients[0].request('tools/call', { name: 'witsos_explore', arguments: { query: QUERIES[0] } }, 'warm-0', 120000);
   process.stderr.write(`[repro] warm explore took ${Math.round(performance.now() - t0)}ms (timeout=${!!r.__timeout})\n`);
   await sleep(500);
 }
@@ -95,7 +95,7 @@ process.stderr.write(`[repro] firing ${N} concurrent explores...\n`);
 const waveStart = performance.now();
 const results = await Promise.all(clients.map((c, i) => {
   const started = performance.now();
-  return c.request('tools/call', { name: 'codegraph_explore', arguments: { query: QUERIES[i % QUERIES.length] } }, `call-${c.id}`, TIMEOUT_MS)
+  return c.request('tools/call', { name: 'witsos_explore', arguments: { query: QUERIES[i % QUERIES.length] } }, `call-${c.id}`, TIMEOUT_MS)
     .then((m) => ({
       id: c.id,
       ms: Math.round(performance.now() - started),

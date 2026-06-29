@@ -6,7 +6,7 @@
  * the real scheduling code without spawning threads or needing a built dist.
  *
  * End-to-end behavior with real worker threads (a worker opens its own WAL read
- * connection and runs codegraph_explore) is validated separately against a real
+ * connection and runs witsos_explore) is validated separately against a real
  * index; here we pin the orchestration that makes that safe and fair.
  */
 import { describe, it, expect } from 'vitest';
@@ -78,8 +78,8 @@ describe('resolvePoolSize', () => {
 describe('QueryPool', () => {
   it('dispatches a call and returns the worker result', async () => {
     const pool = new QueryPool({ root: '/x', size: 1, createWorker: () => new FakeWorker((m) => ({ result: ok(`r:${m.toolName}`) })) });
-    const res = await pool.run('codegraph_explore', { query: 'q' });
-    expect(res.content[0].text).toBe('r:codegraph_explore');
+    const res = await pool.run('witsos_explore', { query: 'q' });
+    expect(res.content[0].text).toBe('r:witsos_explore');
     await pool.destroy();
   });
 
@@ -98,7 +98,7 @@ describe('QueryPool', () => {
       })(),
     });
     const pool = new QueryPool({ root: '/x', size: 5, createWorker: () => new FakeWorker(behavior) });
-    const calls = Promise.all(Array.from({ length: 5 }, (_, i) => pool.run('codegraph_search', { i })));
+    const calls = Promise.all(Array.from({ length: 5 }, (_, i) => pool.run('witsos_search', { i })));
     await sleep(40); // let all workers spawn (cold-start cap → a few generations) + dispatch
     expect(maxActive).toBe(5);
     release();
@@ -110,7 +110,7 @@ describe('QueryPool', () => {
   it('does not spawn the whole pool for a single call (pending-aware growth)', async () => {
     let created = 0;
     const pool = new QueryPool({ root: '/x', size: 8, createWorker: () => { created++; return new FakeWorker((m) => ({ result: ok(`r${m.id}`) })); } });
-    await pool.run('codegraph_node', { symbol: 's' });
+    await pool.run('witsos_node', { symbol: 's' });
     // One eager worker + at most the cold-start cap — never all 8.
     expect(created).toBeLessThanOrEqual(2);
     await pool.destroy();
@@ -123,7 +123,7 @@ describe('QueryPool', () => {
       // First dispatch crashes its worker; the retry (on a respawn/other worker) succeeds.
       createWorker: () => new FakeWorker((m) => (++calls === 1 ? { crash: true } : { result: ok(`recovered:${m.id}`) })),
     });
-    const res = await pool.run('codegraph_explore', { query: 'q' });
+    const res = await pool.run('witsos_explore', { query: 'q' });
     expect(res.isError).toBeFalsy();
     expect(res.content[0].text).toBe('recovered:1');
     await sleep(10);
@@ -132,21 +132,21 @@ describe('QueryPool', () => {
     // keeps serving.
     expect(pool.liveWorkers).toBeGreaterThanOrEqual(1);
     expect(pool.healthy).toBe(true);
-    const again = await pool.run('codegraph_node', { symbol: 's' });
+    const again = await pool.run('witsos_node', { symbol: 's' });
     expect(again.isError).toBeFalsy();
     await pool.destroy();
   });
 
   it('fails a poison call gracefully without wedging the pool', async () => {
     // This specific call always crashes its worker; a normal call still works.
-    const poison = (m: CallMsg) => m.toolName === 'codegraph_explore';
+    const poison = (m: CallMsg) => m.toolName === 'witsos_explore';
     const pool = new QueryPool({
       root: '/x', size: 3, maxRetries: 1,
       createWorker: () => new FakeWorker((m) => (poison(m) ? { crash: true } : { result: ok(`ok:${m.id}`) })),
     });
-    const bad = await pool.run('codegraph_explore', { query: 'boom' });
+    const bad = await pool.run('witsos_explore', { query: 'boom' });
     expect(bad.isError).toBe(true); // graceful, after retries
-    const good = await pool.run('codegraph_search', { query: 'fine' });
+    const good = await pool.run('witsos_search', { query: 'fine' });
     expect(good.isError).toBeFalsy();
     expect(good.content[0].text).toMatch(/^ok:/);
     await pool.destroy();
@@ -156,7 +156,7 @@ describe('QueryPool', () => {
     // 1 worker, every call hangs; soft-timeout small → the caller gets guidance,
     // never a hard error, never a hang.
     const pool = new QueryPool({ root: '/x', size: 1, softTimeoutMs: 60, createWorker: () => new FakeWorker(() => ({ hang: true })) });
-    const res = await pool.run('codegraph_explore', { query: 'q' });
+    const res = await pool.run('witsos_explore', { query: 'q' });
     expect(res.isError).toBeFalsy();            // NOT an error (abandonment rule)
     expect(res.content[0].text).toMatch(/busy|retry/i);
     await pool.destroy();
@@ -164,7 +164,7 @@ describe('QueryPool', () => {
 
   it('destroy settles outstanding calls instead of hanging', async () => {
     const pool = new QueryPool({ root: '/x', size: 1, softTimeoutMs: 10_000, createWorker: () => new FakeWorker(() => ({ hang: true })) });
-    const pending = pool.run('codegraph_explore', { query: 'q' });
+    const pending = pool.run('witsos_explore', { query: 'q' });
     await sleep(5);
     await pool.destroy();
     const res = await pending; // must resolve, not hang

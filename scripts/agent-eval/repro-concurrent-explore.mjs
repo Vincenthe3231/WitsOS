@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Reproduction harness A — does the shared daemon serialize concurrent explore?
 //
-// Mirrors the daemon's reality: ONE CodeGraph + ONE ToolHandler (as MCPEngine
-// shares across all sessions), then fires N concurrent codegraph_explore calls
+// Mirrors the daemon's reality: ONE WitsOS + ONE ToolHandler (as MCPEngine
+// shares across all sessions), then fires N concurrent witsos_explore calls
 // and measures:
 //   - each call's wall-clock latency + completion order
 //   - an event-loop HEARTBEAT (setInterval 50ms): the max gap between ticks is a
@@ -10,7 +10,7 @@
 //     real daemon a blocked loop can't flush a finished response or read the
 //     next request, so this gap is what starves the MCP transport.
 //
-// Usage: node repro-concurrent-explore.mjs <repo-with-.codegraph> <N> [timeoutMs]
+// Usage: node repro-concurrent-explore.mjs <repo-with-.witsos> <N> [timeoutMs]
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -26,7 +26,7 @@ const TIMEOUT_MS = Number(timeoutRaw) || 60000; // ~ MCP SDK default request tim
 const load = async (rel) => import(pathToFileURL(resolve(rel)).href);
 const idx = await load('dist/index.js');
 const tools = await load('dist/mcp/tools.js');
-const CodeGraph = idx.default?.default ?? idx.default ?? idx.CodeGraph;
+const WitsOS = idx.default?.default ?? idx.default ?? idx.WitsOS;
 const ToolHandler = tools.ToolHandler ?? tools.default?.ToolHandler;
 
 // Distinct queries so no two calls are trivially identical. Mix of NL questions
@@ -50,7 +50,7 @@ const QUERIES = [
   'how does the menu service build a context menu from contributions',
 ];
 
-const cg = CodeGraph.openSync(repo);
+const cg = WitsOS.openSync(repo);
 let fileCount = 0;
 try { fileCount = cg.getStats().fileCount; } catch {}
 const handler = new ToolHandler(cg);
@@ -75,7 +75,7 @@ function runOne(i) {
     timer = setTimeout(() => res({ timedOut: true }), TIMEOUT_MS);
   });
   const work = handler
-    .execute('codegraph_explore', { query: q })
+    .execute('witsos_explore', { query: q })
     .then((r) => ({ ok: !r.isError, chars: r.content?.[0]?.text?.length ?? 0 }))
     .catch((e) => ({ ok: false, err: String(e?.message ?? e) }));
   return Promise.race([work, timeout]).then((r) => {

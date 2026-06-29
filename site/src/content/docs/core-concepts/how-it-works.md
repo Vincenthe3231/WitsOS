@@ -3,7 +3,7 @@ title: How It Works
 description: The extraction, storage, resolution, and auto-sync pipeline.
 ---
 
-CodeGraph turns source code into a queryable graph in four stages.
+WitsOS turns source code into a queryable graph in four stages.
 
 ```
 files → Extraction (tree-sitter) → DB (nodes/edges/files)
@@ -21,11 +21,11 @@ files → Extraction (tree-sitter) → DB (nodes/edges/files)
 
 ## 2. Storage
 
-Everything goes into a local SQLite database (`.codegraph/codegraph.db`) with FTS5 full-text search, using Node's built-in `node:sqlite` in WAL mode from the bundled runtime.
+Everything goes into a local SQLite database (`.witsos/witsos.db`) with FTS5 full-text search, using Node's built-in `node:sqlite` in WAL mode from the bundled runtime.
 
 ## 3. Resolution
 
-After extraction, references are resolved: function calls → definitions, imports → source files, class inheritance, and framework-specific patterns. Some dynamic-dispatch boundaries (callbacks, observers, React re-render, JSX children) are bridged by synthesizers so flows connect end-to-end. See [Resolution & Frameworks](/codegraph/core-concepts/resolution/).
+After extraction, references are resolved: function calls → definitions, imports → source files, class inheritance, and framework-specific patterns. Some dynamic-dispatch boundaries (callbacks, observers, React re-render, JSX children) are bridged by synthesizers so flows connect end-to-end. See [Resolution & Frameworks](/witsos/core-concepts/resolution/).
 
 ## 4. Auto-sync
 

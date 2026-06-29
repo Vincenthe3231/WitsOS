@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { WitsOS } from '../src';
 
 describe('spring-event synthesizer', () => {
   let dir: string;
@@ -83,7 +83,7 @@ class LegacyListener implements ApplicationListener<OrderCancelledEvent> {
 }
 `);
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
 
@@ -120,7 +120,7 @@ class PlainService {
     String find(String id) { return repo.get(id); }
 }
 `);
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
     const count = db

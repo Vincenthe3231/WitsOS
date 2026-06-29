@@ -25,7 +25,7 @@ export interface EvalResult {
 export interface EvalReport {
   timestamp: string;
   codebasePath: string;
-  codegraphSha: string;
+  witsosSha: string;
   summary: {
     total: number;
     passed: number;

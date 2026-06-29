@@ -1,6 +1,6 @@
 /**
  * Vue store action/mutation/getter extraction (the foundation for finding and
- * reading store logic — `codegraph_node login` / `getSessionList`).
+ * reading store logic — `witsos_node login` / `getSessionList`).
  *
  * Vuex/Pinia define a store's callable surface as object-literal members nested
  * under `actions`/`mutations`/`getters`, or as body-local consts in a Pinia setup
@@ -16,7 +16,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { WitsOS } from '../src';
 
 describe('vue store extraction', () => {
   let dir: string;
@@ -79,7 +79,7 @@ export const useChatStore = defineStore('chat', () => {
 `
     );
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
     const fn = (name: string) =>
@@ -124,7 +124,7 @@ export function run(key) { return actions[key](); }
 `
     );
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
 

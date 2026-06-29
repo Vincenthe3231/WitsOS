@@ -2,10 +2,10 @@
  * Custom extension → language mapping (#906).
  *
  * A project can map non-standard file extensions to a supported language via a
- * committed `codegraph.json` at the repo root, so files that would otherwise be
+ * committed `witsos.json` at the repo root, so files that would otherwise be
  * silently skipped get indexed under the right grammar. These tests cover the
  * two choke-point functions (detectLanguage / isSourceFile) honoring an override
- * map, the loader's validation/normalization/caching of `codegraph.json`, and a
+ * map, the loader's validation/normalization/caching of `witsos.json`, and a
  * full index proving a custom-extension file is actually extracted — while the
  * zero-config path stays byte-identical (the file is NOT indexed without config).
  */
@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { WitsOS } from '../src';
 import { detectLanguage, isSourceFile } from '../src/extraction/grammars';
 import { loadExtensionOverrides, clearProjectConfigCache } from '../src/project-config';
 
@@ -40,7 +40,7 @@ describe('custom extension → language mapping (#906)', () => {
     });
   });
 
-  describe('loadExtensionOverrides (codegraph.json)', () => {
+  describe('loadExtensionOverrides (witsos.json)', () => {
     let dir: string;
     beforeEach(() => {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-extmap-'));
@@ -52,11 +52,11 @@ describe('custom extension → language mapping (#906)', () => {
     });
     const writeConfig = (obj: unknown) =>
       fs.writeFileSync(
-        path.join(dir, 'codegraph.json'),
+        path.join(dir, 'witsos.json'),
         typeof obj === 'string' ? obj : JSON.stringify(obj)
       );
 
-    it('returns an empty map when there is no codegraph.json', () => {
+    it('returns an empty map when there is no witsos.json', () => {
       expect(loadExtensionOverrides(dir)).toEqual({});
     });
 
@@ -97,13 +97,13 @@ describe('custom extension → language mapping (#906)', () => {
       writeConfig({ extensions: { '.foo': 'go' } });
       // Force a distinct mtime in case the filesystem clock is coarse.
       const future = new Date(Date.now() + 2000);
-      fs.utimesSync(path.join(dir, 'codegraph.json'), future, future);
+      fs.utimesSync(path.join(dir, 'witsos.json'), future, future);
 
       expect(loadExtensionOverrides(dir)).toEqual({ '.foo': 'go' });
     });
   });
 
-  describe('indexAll honors codegraph.json end-to-end', () => {
+  describe('indexAll honors witsos.json end-to-end', () => {
     let dir: string;
     beforeEach(() => {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-extmap-idx-'));
@@ -119,7 +119,7 @@ describe('custom extension → language mapping (#906)', () => {
       fs.writeFileSync(p, body);
     };
     const indexAndQuery = async () => {
-      const cg = await CodeGraph.init(dir, { silent: true });
+      const cg = await WitsOS.init(dir, { silent: true });
       await cg.indexAll();
       const db = (cg as any).db.db;
       const nodes = db
@@ -135,7 +135,7 @@ describe('custom extension → language mapping (#906)', () => {
     const SOURCE = 'export function widgetHandler(x: number): number { return x + 1; }\n';
 
     it('indexes a custom-extension file mapped to a supported language', async () => {
-      write('codegraph.json', JSON.stringify({ extensions: { '.foo': 'typescript' } }));
+      write('witsos.json', JSON.stringify({ extensions: { '.foo': 'typescript' } }));
       write('widget.foo', SOURCE);
 
       const { nodes, files } = await indexAndQuery();
@@ -145,7 +145,7 @@ describe('custom extension → language mapping (#906)', () => {
       expect(nodes.some((n: any) => n.name === 'widgetHandler' && n.language === 'typescript')).toBe(true);
     });
 
-    it('does NOT index the same file without codegraph.json (zero-config preserved)', async () => {
+    it('does NOT index the same file without witsos.json (zero-config preserved)', async () => {
       write('widget.foo', SOURCE);
 
       const { nodes, files } = await indexAndQuery();

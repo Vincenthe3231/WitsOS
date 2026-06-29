@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Clone + index the 4 "not-trained-on" eval repos into $AGENT_EVAL_OUT/repos. These were
 # selected via a no-tools memory-probe gate (Sonnet cannot answer their flow questions from
-# memory — so the no-codegraph baseline is honest). Env: AGENT_EVAL_OUT=<scratch dir>
+# memory — so the no-witsos baseline is honest). Env: AGENT_EVAL_OUT=<scratch dir>
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ENGINE="$(cd "$HERE/../.." && pwd)"
-BIN="$ENGINE/dist/bin/codegraph.js"
+BIN="$ENGINE/dist/bin/witsos.js"
 OUT="${AGENT_EVAL_OUT:-/tmp/cg-offload-eval}"
 ROOT="$OUT/repos"; mkdir -p "$ROOT"
-export CODEGRAPH_TELEMETRY=0 DO_NOT_TRACK=1
+export WITSOS_TELEMETRY=0 DO_NOT_TRACK=1
 [ -f "$BIN" ] || { echo "engine not built: run 'npm run build' in $ENGINE first"; exit 1; }
 
 clone_index() { # url name

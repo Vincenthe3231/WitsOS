@@ -19,7 +19,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { WitsOS } from '../src';
 
 describe('rtk-query synthesizer', () => {
   let dir: string;
@@ -100,7 +100,7 @@ export function LazyForm() {
 `
     );
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
 
@@ -178,7 +178,7 @@ export function Thing() {
 `
     );
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
 

@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { WitsOS } from '../src';
 
 describe('lombok synthesis', () => {
   let dir: string;
@@ -30,7 +30,7 @@ describe('lombok synthesis', () => {
 
   type Row = { name: string; kind: string; decorators: string | null; docstring: string | null; signature: string | null };
   const load = async () => {
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
     const nodes: Row[] = db.prepare(`SELECT name, kind, decorators, docstring, signature FROM nodes`).all();

@@ -2,7 +2,7 @@
  * Sync Module Tests
  *
  * Tests for sync functionality (incremental updates).
- * Note: Git hooks functionality has been removed in favor of codegraph's
+ * Note: Git hooks functionality has been removed in favor of witsos's
  * Claude Code hooks integration.
  */
 
@@ -11,15 +11,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { execFileSync } from 'child_process';
-import CodeGraph from '../src/index';
+import WitsOS from '../src/index';
 
 describe('Sync Module', () => {
   describe('Sync Functionality', () => {
     let testDir: string;
-    let cg: CodeGraph;
+    let cg: WitsOS;
 
     beforeEach(async () => {
-      testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-sync-func-'));
+      testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'witsos-sync-func-'));
 
       // Create initial source files
       const srcDir = path.join(testDir, 'src');
@@ -30,7 +30,7 @@ describe('Sync Module', () => {
       );
 
       // Initialize and index
-      cg = CodeGraph.initSync(testDir, {
+      cg = WitsOS.initSync(testDir, {
         config: {
           include: ['**/*.ts'],
           exclude: [],
@@ -154,14 +154,14 @@ describe('Sync Module', () => {
 
   describe('Git-based sync', () => {
     let testDir: string;
-    let cg: CodeGraph;
+    let cg: WitsOS;
 
     function git(...args: string[]) {
       execFileSync('git', args, { cwd: testDir, stdio: 'pipe' });
     }
 
     beforeEach(async () => {
-      testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-git-sync-'));
+      testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'witsos-git-sync-'));
 
       // Initialize a git repo with an initial commit
       git('init');
@@ -178,8 +178,8 @@ describe('Sync Module', () => {
       git('add', '-A');
       git('commit', '-m', 'initial');
 
-      // Initialize CodeGraph and index
-      cg = CodeGraph.initSync(testDir, {
+      // Initialize WitsOS and index
+      cg = WitsOS.initSync(testDir, {
         config: {
           include: ['**/*.ts'],
           exclude: [],
@@ -226,7 +226,7 @@ describe('Sync Module', () => {
     });
 
     it('should stop reporting untracked files once they are indexed (issue #206)', async () => {
-      // Untracked files stay `??` in git status even after codegraph indexes
+      // Untracked files stay `??` in git status even after witsos indexes
       // them. Change detection must compare them against the DB by hash, not
       // report every untracked file as "added" on every sync/status.
       fs.writeFileSync(
@@ -311,14 +311,14 @@ describe('Sync Module', () => {
   // git fast path must exclude exactly what the full scan does. (#766)
   describe('Incremental sync honors the ignore matcher (#766)', () => {
     let testDir: string;
-    let cg: CodeGraph;
+    let cg: WitsOS;
 
     function git(...args: string[]) {
       execFileSync('git', args, { cwd: testDir, stdio: 'pipe' });
     }
 
     beforeEach(async () => {
-      testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-766-'));
+      testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'witsos-766-'));
 
       git('init');
       git('config', 'user.email', 'test@test.com');
@@ -352,7 +352,7 @@ describe('Sync Module', () => {
       git('add', '-f', 'generated/out.ts'); // force the ignored-but-tracked file in
       git('commit', '-m', 'initial');
 
-      cg = CodeGraph.initSync(testDir, {
+      cg = WitsOS.initSync(testDir, {
         config: { include: ['**/*.ts'], exclude: [] },
       });
       await cg.indexAll();
@@ -401,7 +401,7 @@ describe('Sync Module', () => {
     });
 
     it('status (getChangedFiles) agrees with sync — no phantom pending changes', async () => {
-      // The user-visible symptom today: `codegraph status` reads getChangedFiles
+      // The user-visible symptom today: `witsos status` reads getChangedFiles
       // and reports a vendor edit as a pending change that `sync` (a filesystem
       // reconcile) then never indexes — so the count never clears. Both must now
       // agree that nothing happened.
@@ -431,10 +431,10 @@ describe('Sync Module', () => {
 
   describe('Cross-file module-attribute caller edges survive callee re-index (#899)', () => {
     let testDir: string;
-    let cg: CodeGraph;
+    let cg: WitsOS;
 
     beforeEach(async () => {
-      testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-899-'));
+      testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'witsos-899-'));
 
       // pkg/mod.py — a module with two functions, both called from a separate
       // test file via `mod.<fn>(...)` (module-attribute access). This is the
@@ -475,7 +475,7 @@ describe('Sync Module', () => {
         ].join('\n')
       );
 
-      cg = CodeGraph.initSync(testDir, {
+      cg = WitsOS.initSync(testDir, {
         config: { include: ['**/*.py'], exclude: [] },
       });
       await cg.indexAll();

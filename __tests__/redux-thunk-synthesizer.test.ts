@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { WitsOS } from '../src';
 
 /**
  * End-to-end test for the redux-thunk dispatch-chain synthesizer.
@@ -48,7 +48,7 @@ export const notAThunk = 'dispatch(innerThunk())';
 `
     );
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
 
     const db = (cg as any).db.db;
@@ -105,7 +105,7 @@ export const logout = createAsyncThunk('user/logout', async (_: void, { dispatch
 `
     );
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
 
     const db = (cg as any).db.db;

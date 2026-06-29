@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { WitsOS } from '../src';
 
 describe('GoFrame route synthesizer', () => {
   let dir: string;
@@ -85,7 +85,7 @@ func helper(ctx context.Context) (res *system.DeptSearchRes, err error) {
 `
     );
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
 
@@ -159,7 +159,7 @@ func (c *c${mod}) List(ctx context.Context, req *${mod}.ListReq) (res *${mod}.Li
       );
     }
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await WitsOS.init(dir, { silent: true });
     await cg.indexAll();
     const db = (cg as any).db.db;
     const rows = db

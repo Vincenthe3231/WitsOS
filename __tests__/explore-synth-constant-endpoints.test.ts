@@ -1,5 +1,5 @@
 /**
- * Regression: codegraph_explore must SURFACE a synthesized edge whose endpoints are
+ * Regression: witsos_explore must SURFACE a synthesized edge whose endpoints are
  * `constant` nodes (RTK thunk→thunk), on a SMALL repo.
  *
  * `buildFlowFromNamedSymbols` historically filtered its "named" set to CALLABLE kinds
@@ -17,21 +17,21 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import CodeGraph from '../src/index';
+import WitsOS from '../src/index';
 import { ToolHandler } from '../src/mcp/tools';
 
-// Assertions read RAW codegraph_explore output; managed offload would replace it. Disable
+// Assertions read RAW witsos_explore output; managed offload would replace it. Disable
 // it for this file so the suite is hermetic regardless of dev-machine config, then restore.
 let _prevOffloadDisable: string | undefined;
-beforeAll(() => { _prevOffloadDisable = process.env.CODEGRAPH_OFFLOAD_DISABLE; process.env.CODEGRAPH_OFFLOAD_DISABLE = '1'; });
+beforeAll(() => { _prevOffloadDisable = process.env.WITSOS_OFFLOAD_DISABLE; process.env.WITSOS_OFFLOAD_DISABLE = '1'; });
 afterAll(() => {
-  if (_prevOffloadDisable === undefined) delete process.env.CODEGRAPH_OFFLOAD_DISABLE;
-  else process.env.CODEGRAPH_OFFLOAD_DISABLE = _prevOffloadDisable;
+  if (_prevOffloadDisable === undefined) delete process.env.WITSOS_OFFLOAD_DISABLE;
+  else process.env.WITSOS_OFFLOAD_DISABLE = _prevOffloadDisable;
 });
 
-describe('codegraph_explore — synthesized constant→constant edges surface on small repos', () => {
+describe('witsos_explore — synthesized constant→constant edges surface on small repos', () => {
   let dir: string;
-  let cg: CodeGraph;
+  let cg: WitsOS;
   let handler: ToolHandler;
 
   afterEach(() => {
@@ -61,7 +61,7 @@ export const outerThunk = createAsyncThunk('app/outer', async (n: number, { disp
 `
     );
 
-    cg = CodeGraph.initSync(dir, { config: { include: ['**/*.ts'], exclude: [] } });
+    cg = WitsOS.initSync(dir, { config: { include: ['**/*.ts'], exclude: [] } });
     await cg.indexAll();
 
     // Precondition: the endpoints really are `constant` nodes — the exact kind the old
@@ -72,7 +72,7 @@ export const outerThunk = createAsyncThunk('app/outer', async (n: number, { disp
     expect(outerKind).toBe('constant');
 
     handler = new ToolHandler(cg);
-    const res = await handler.execute('codegraph_explore', { query: 'outerThunk innerThunk' });
+    const res = await handler.execute('witsos_explore', { query: 'outerThunk innerThunk' });
     const text = res.content[0].text as string;
 
     // The synthesized hop now surfaces (was invisible: both endpoints `constant` AND the
