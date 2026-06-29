@@ -42,9 +42,13 @@ export async function locateFfmpeg(ffmpegPathOverride?: string): Promise<string 
     const mod: any = await import('ffmpeg-static' as string);
     const p = mod.default ?? mod;
     if (p && typeof p === 'string') {
-      // pnpm store symlinks are not resolvable by spawn() on Windows — resolve to real path.
-      const { realpathSync } = await import('fs');
-      try { return realpathSync(p); } catch { return p; }
+      // pnpm store uses Windows junctions which spawn() may not resolve.
+      // Try to resolve to real path; if it fails or path doesn't exist, skip and use system ffmpeg.
+      const { realpathSync, existsSync } = await import('fs');
+      try {
+        const resolved = realpathSync(p);
+        if (existsSync(resolved)) return resolved;
+      } catch { /* realpathSync or existsSync failed */ }
     }
   } catch { /* not installed */ }
 

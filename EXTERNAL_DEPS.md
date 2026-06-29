@@ -5,11 +5,13 @@ WitsOS bundles all Node dependencies. The following system binaries must be inst
 ## Required for video extraction (Phase 6c)
 
 - **ffmpeg** + **ffprobe** (must be from same installation)
-  - Windows: `winget install FFmpeg`
+  - **Windows:** `winget install FFmpeg` (recommended — avoids pnpm store symlink issues)
   - macOS: `brew install ffmpeg`
   - Linux: `apt install ffmpeg` / `dnf install ffmpeg`
   - Manual: https://ffmpeg.org/download.html
   - Verify: `ffprobe -version`
+
+**Note:** WitsOS bundles ffmpeg-static but Windows pnpm symlinks may not resolve in spawn(). Using system ffmpeg (via `winget`) is more reliable.
 
 ## Audio extraction behavior (Phase 6c-2: STT)
 
