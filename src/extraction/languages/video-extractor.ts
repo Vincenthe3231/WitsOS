@@ -163,10 +163,15 @@ export class VideoExtractor {
       const ffmpegBin = await locateFfmpeg();
       if (!ffmpegBin) return null;
 
-      // Derive ffprobe path from ffmpeg (same pattern as probeAudio in ffmpeg.ts)
-      const ffprobeBin = ffmpegBin === 'ffmpeg'
+      // Derive ffprobe path from ffmpeg path.
+      // ffmpeg-static only bundles ffmpeg, not ffprobe — fall back to system ffprobe.
+      const derivedFfprobe = ffmpegBin === 'ffmpeg'
         ? 'ffprobe'
         : ffmpegBin.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+      const ffprobeExists = await import('fs').then(({ existsSync }) =>
+        derivedFfprobe === 'ffprobe' || existsSync(derivedFfprobe)
+      );
+      const ffprobeBin = ffprobeExists ? derivedFfprobe : 'ffprobe';
 
       const output = await execAsync(ffprobeBin, [
         '-v', 'error',
