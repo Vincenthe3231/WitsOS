@@ -76,7 +76,7 @@ export interface ProjectConfig {
   };
   /**
    * Opt-in STT (Phase 6). Audio files are transcribed only when `stt.enabled`
-   * is true AND the optional `sherpa-onnx` + `ffmpeg-static` packages are
+   * is true AND `sherpa-onnx` + `ffmpeg-ffprobe-static` packages are
    * installed. Absent/disabled yields a `document` node and zero chunks.
    */
   stt?: {
