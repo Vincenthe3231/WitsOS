@@ -31,7 +31,12 @@ import { logWarn } from './errors';
 /** Filename of the project-scoped config, resolved relative to the project root. */
 export const PROJECT_CONFIG_FILENAME = 'WitsOS.json';
 
+/** Current config schema version. Bump when adding required fields. */
+export const CURRENT_CONFIG_VERSION = 1;
+
 export interface ProjectConfig {
+  /** Config schema version. Auto-upgraded on load. */
+  _version?: number;
   /** Map of custom file extension (`.foo`) to a supported language id. */
   extensions?: Record<string, string>;
   /**
@@ -131,6 +136,7 @@ export interface WorkersConfig {
 
 /** Parsed, validated view of a project's `WitsOS.json`. */
 interface ParsedConfig {
+  _version: number;
   extensions: Record<string, Language>;
   includeIgnored: string[];
   exclude: string[];
@@ -178,6 +184,7 @@ const cache = new Map<string, CacheEntry>();
 /** Shared frozen empties so the no-config path allocates nothing. */
 const EMPTY_EXTENSIONS: Record<string, Language> = Object.freeze({});
 const EMPTY_CONFIG: ParsedConfig = Object.freeze({
+  _version: CURRENT_CONFIG_VERSION,
   extensions: EMPTY_EXTENSIONS,
   includeIgnored: Object.freeze([]) as unknown as string[],
   exclude: Object.freeze([]) as unknown as string[],
@@ -207,6 +214,64 @@ function normalizeExtKey(raw: string): string | null {
 }
 
 /**
+ * Upgrade project config if schema version is outdated.
+ * Writes the upgraded config back to disk and returns true if upgraded.
+ */
+function upgradeProjectConfigIfNeeded(file: string): boolean {
+  try {
+    const rawConfig = JSON.parse(fs.readFileSync(file, 'utf-8')) as ProjectConfig;
+    const version = rawConfig._version ?? 0;
+
+    if (version >= CURRENT_CONFIG_VERSION) return false;
+
+    // Read scaffold to get all new defaults
+    const scaffold: ProjectConfig = {
+      _version: CURRENT_CONFIG_VERSION,
+      extensions: {},
+      includeIgnored: [],
+      exclude: [],
+      ocr: {
+        enabled: false,
+        languages: ['en'],
+        maxImageMP: 25,
+        minConfidence: 0.5,
+      },
+      stt: {
+        enabled: false,
+        model: 'base',
+        language: 'auto',
+        diarize: false,
+        minConfidence: 0.0,
+        maxDurationSecs: 1800,
+      },
+      workers: {
+        parse: null,
+        ocr: 1,
+        stt: 1,
+      },
+    };
+
+    // Merge: scaffold defaults + user's current values (user wins on conflicts)
+    const upgraded: ProjectConfig = {
+      _version: CURRENT_CONFIG_VERSION,
+      extensions: { ...scaffold.extensions, ...rawConfig.extensions },
+      includeIgnored: rawConfig.includeIgnored ?? scaffold.includeIgnored,
+      exclude: rawConfig.exclude ?? scaffold.exclude,
+      ocr: { ...scaffold.ocr, ...rawConfig.ocr },
+      stt: { ...scaffold.stt, ...rawConfig.stt },
+      workers: { ...scaffold.workers, ...rawConfig.workers },
+    };
+
+    fs.writeFileSync(file, JSON.stringify(upgraded, null, 2) + '\n', 'utf-8');
+    cache.delete(path.dirname(file)); // clear cache so next load picks up upgrade
+    logWarn(`Upgraded ${PROJECT_CONFIG_FILENAME} from v${version} to v${CURRENT_CONFIG_VERSION}`, { file });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read + JSON-parse a `WitsOS.json` once and return its validated view.
  * Every failure mode degrades to the zero-config default — a missing file, bad
  * JSON, or a typo'd value never throws.
@@ -217,6 +282,15 @@ function parseConfig(file: string): ParsedConfig {
     raw = fs.readFileSync(file, 'utf-8');
   } catch {
     return EMPTY_CONFIG;
+  }
+
+  // Try to upgrade if file exists and version is outdated
+  try {
+    upgradeProjectConfigIfNeeded(file);
+    // Re-read after potential upgrade
+    raw = fs.readFileSync(file, 'utf-8');
+  } catch {
+    // If upgrade fails, continue with original content
   }
 
   let parsed: unknown;
@@ -238,6 +312,7 @@ function parseConfig(file: string): ParsedConfig {
   const ocr = extractOcr(parsed, file);
   const stt = extractStt(parsed, file);
   const workers = extractWorkers(parsed, file);
+  const _version = CURRENT_CONFIG_VERSION;
   if (
     extensions === EMPTY_EXTENSIONS &&
     includeIgnored.length === 0 &&
@@ -248,7 +323,7 @@ function parseConfig(file: string): ParsedConfig {
   ) {
     return EMPTY_CONFIG;
   }
-  return { extensions, includeIgnored, exclude, ocr, stt, workers };
+  return { _version, extensions, includeIgnored, exclude, ocr, stt, workers };
 }
 
 /**
@@ -552,6 +627,7 @@ export function scaffoldProjectConfig(rootDir: string): void {
   if (fs.existsSync(file)) return;
 
   const scaffold: ProjectConfig = {
+    _version: CURRENT_CONFIG_VERSION,
     extensions: {},
     includeIgnored: [],
     exclude: [],
