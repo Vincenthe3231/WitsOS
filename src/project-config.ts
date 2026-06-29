@@ -214,6 +214,38 @@ function normalizeExtKey(raw: string): string | null {
 }
 
 /**
+ * Get the default project config template (single source of truth).
+ * Used by both scaffoldProjectConfig() and upgradeProjectConfigIfNeeded().
+ */
+function getDefaultProjectConfig(): ProjectConfig {
+  return {
+    _version: CURRENT_CONFIG_VERSION,
+    extensions: {},
+    includeIgnored: [],
+    exclude: [],
+    ocr: {
+      enabled: false,
+      languages: ['en'],
+      maxImageMP: 25,
+      minConfidence: 0.5,
+    },
+    stt: {
+      enabled: false,
+      model: 'base',
+      language: 'auto',
+      diarize: false,
+      minConfidence: 0.0,
+      maxDurationSecs: 1800,
+    },
+    workers: {
+      parse: null,
+      ocr: 1,
+      stt: 1,
+    },
+  };
+}
+
+/**
  * Upgrade project config if schema version is outdated.
  * Writes the upgraded config back to disk and returns true if upgraded.
  */
@@ -224,32 +256,7 @@ function upgradeProjectConfigIfNeeded(file: string): boolean {
 
     if (version >= CURRENT_CONFIG_VERSION) return false;
 
-    // Read scaffold to get all new defaults
-    const scaffold: ProjectConfig = {
-      _version: CURRENT_CONFIG_VERSION,
-      extensions: {},
-      includeIgnored: [],
-      exclude: [],
-      ocr: {
-        enabled: false,
-        languages: ['en'],
-        maxImageMP: 25,
-        minConfidence: 0.5,
-      },
-      stt: {
-        enabled: false,
-        model: 'base',
-        language: 'auto',
-        diarize: false,
-        minConfidence: 0.0,
-        maxDurationSecs: 1800,
-      },
-      workers: {
-        parse: null,
-        ocr: 1,
-        stt: 1,
-      },
-    };
+    const scaffold = getDefaultProjectConfig();
 
     // Merge: scaffold defaults + user's current values (user wins on conflicts)
     const upgraded: ProjectConfig = {
@@ -264,7 +271,11 @@ function upgradeProjectConfigIfNeeded(file: string): boolean {
 
     fs.writeFileSync(file, JSON.stringify(upgraded, null, 2) + '\n', 'utf-8');
     cache.delete(path.dirname(file)); // clear cache so next load picks up upgrade
-    logWarn(`Upgraded ${PROJECT_CONFIG_FILENAME} from v${version} to v${CURRENT_CONFIG_VERSION}`, { file });
+
+    // Notify user on stderr (version-controlled file modified)
+    console.error(`[WitsOS] Upgraded ${PROJECT_CONFIG_FILENAME} from v${version} to v${CURRENT_CONFIG_VERSION}`);
+    console.error(`[WitsOS] Added new config fields. Review changes and commit if using version control.`);
+
     return true;
   } catch {
     return false;
@@ -626,31 +637,7 @@ export function scaffoldProjectConfig(rootDir: string): void {
   const file = path.join(rootDir, PROJECT_CONFIG_FILENAME);
   if (fs.existsSync(file)) return;
 
-  const scaffold: ProjectConfig = {
-    _version: CURRENT_CONFIG_VERSION,
-    extensions: {},
-    includeIgnored: [],
-    exclude: [],
-    ocr: {
-      enabled: false,
-      languages: ['en'],
-      maxImageMP: 25,
-      minConfidence: 0.5,
-    },
-    stt: {
-      enabled: false,
-      model: 'base',
-      language: 'auto',
-      diarize: false,
-      minConfidence: 0.0,
-      maxDurationSecs: 1800,
-    },
-    workers: {
-      parse: null,
-      ocr: 1,
-      stt: 1,
-    },
-  };
+  const scaffold = getDefaultProjectConfig();
 
   try {
     fs.writeFileSync(file, JSON.stringify(scaffold, null, 2) + '\n', 'utf-8');
