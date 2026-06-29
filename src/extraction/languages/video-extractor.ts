@@ -176,35 +176,47 @@ export class VideoExtractor {
       const output = await execAsync(ffprobeBin, [
         '-v', 'error',
         '-show_entries', 'format=duration',
-        '-show_entries', 'stream=width,height,codec_name,codec_type',
+        '-show_entries', 'stream=codec_name,codec_type,width,height',
         '-of', 'csv=p=0',
         this.filePath,
       ], 10_000);
 
+      // ffprobe csv output: stream lines first (codec_name,codec_type,width,height),
+      // then format line (duration). Parse each line by content, not by position.
       const lines = output.trim().split('\n');
       if (lines.length === 0) return null;
 
-      const duration = parseFloat(lines[0]!) || 0;
-      if (duration <= 0) return null;
-
+      let duration = 0;
       let width = 0, height = 0, videoCodec = 'unknown';
-      for (let i = 1; i < lines.length; i++) {
-        const parts = lines[i]!.split(',');
-        if (parts.length >= 4) {
-          const w = parseInt(parts[0]!, 10);
-          const h = parseInt(parts[1]!, 10);
-          const codec = parts[2]!.trim();
-          const type = parts[3]!.trim();
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const parts = trimmed.split(',');
+
+        // Format line: single numeric value (duration)
+        if (parts.length === 1) {
+          const d = parseFloat(parts[0]!);
+          if (d > 0) duration = d;
+          continue;
+        }
+
+        // Stream line: codec_name,codec_type[,width,height]
+        if (parts.length >= 2) {
+          const codec = parts[0]!.trim();
+          const type = parts[1]!.trim();
+          const w = parts.length >= 4 ? parseInt(parts[2]!, 10) : 0;
+          const h = parts.length >= 4 ? parseInt(parts[3]!, 10) : 0;
 
           if (type === 'video' && w > 0 && h > 0) {
             width = w;
             height = h;
             videoCodec = codec;
-            break;
           }
         }
       }
 
+      if (duration <= 0) return null;
       return { duration, width, height, videoCodec };
     } catch (err) {
       logWarn(`VideoExtractor.probeMetadata failed`, {
