@@ -17,6 +17,12 @@ importers:
       '@colbymchenry/codegraph':
         specifier: 'link:'
         version: 'link:'
+      '@gutenye/ocr-models':
+        specifier: ^1.4.2
+        version: 1.4.2
+      '@gutenye/ocr-node':
+        specifier: ^1.4.8
+        version: 1.4.8
       adm-zip:
         specifier: ^0.5.17
         version: 0.5.17
@@ -57,12 +63,6 @@ importers:
         specifier: ^0.25.3
         version: 0.25.10
     devDependencies:
-      '@gutenye/ocr-models':
-        specifier: ^1.4.2
-        version: 1.4.2
-      '@gutenye/ocr-node':
-        specifier: ^1.4.8
-        version: 1.4.8
       '@types/adm-zip':
         specifier: ^0.5.8
         version: 0.5.8
