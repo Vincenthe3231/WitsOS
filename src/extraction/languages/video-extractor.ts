@@ -160,8 +160,13 @@ export class VideoExtractor {
     videoCodec: string;
   } | null> {
     try {
-      const ffprobeBin = await locateFfmpeg();
-      if (!ffprobeBin) return null;
+      const ffmpegBin = await locateFfmpeg();
+      if (!ffmpegBin) return null;
+
+      // Derive ffprobe path from ffmpeg (same pattern as probeAudio in ffmpeg.ts)
+      const ffprobeBin = ffmpegBin === 'ffmpeg'
+        ? 'ffprobe'
+        : ffmpegBin.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
 
       const output = await execAsync(ffprobeBin, [
         '-v', 'error',
