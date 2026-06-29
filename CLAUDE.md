@@ -11,7 +11,7 @@ The binary is `witsos` (not `codegraph`) — installed globally via `pnpm link .
 ## Build, Test, Run
 
 ```bash
-# Build (CI=true bypasses pnpm 11's interactive deps-status check)
+# Build (CI=true bypasses pnpm 11's interactive module-purge confirmation; no-TTY guard)
 CI=true pnpm run build:fast   # tsc + copy schema.sql and *.wasm into dist/
 CI=true pnpm run build        # same + chmod bin (full)
 pnpm run dev                  # tsc --watch
