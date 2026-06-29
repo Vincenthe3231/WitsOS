@@ -59,38 +59,58 @@ function makeSpawnFail(exitCode = 1, stderr = 'error') {
 // Fake ffprobe CSV output: stream line + duration line
 const FFPROBE_CSV_OK = 'h264,video,1920,1080\n60.000000\n';
 
-// Stub locateFfmpeg — default returns null (no ffmpeg installed)
+// Stub locateFfmpeg/locateFfprobe — default returns null (no ffmpeg installed)
 vi.mock('../src/extraction/audio/ffmpeg', () => ({
   locateFfmpeg: vi.fn().mockResolvedValue(null),
+  locateFfprobe: vi.fn().mockResolvedValue(null),
   decodeAudioToPcm: vi.fn(),
   probeAudio: vi.fn(),
 }));
 
-// Stub child_process — spawn defaults to fail, execFile defaults to success (for ffprobe validation)
+// Stub child_process — spawn defaults to fail, execFile mocked for ffprobe validation
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>();
   return {
     ...actual,
     spawn: vi.fn(() => makeSpawnFail()),
-    execFile: vi.fn((cmd, args, opts, cb) => {
-      // ffprobe validation probe returns success
-      if (cmd === 'ffprobe' && Array.isArray(args) && args.includes('-version')) {
-        setImmediate(() => cb(null, 'ffprobe version...', ''));
+    execFile: vi.fn((cmd: string, args?: string[], opts?: any, cb?: any) => {
+      // Handle both callback and promisified forms
+      const callback = typeof opts === 'function' ? opts : cb;
+      if (!callback) return undefined;
+
+      // ffprobe validation probe returns success (handles both 'ffprobe' and '/stub/ffprobe')
+      if ((cmd === 'ffprobe' || cmd.endsWith('ffprobe')) && Array.isArray(args) && args.includes('-version')) {
+        setImmediate(() => callback(null, 'ffprobe version...', ''));
       } else {
-        setImmediate(() => cb(new Error('not found')));
+        setImmediate(() => callback(new Error('not found')));
       }
+    }),
+  };
+});
+
+// Mock fs.existsSync for stub paths
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  const originalExistSync = actual.existsSync;
+  return {
+    ...actual,
+    existsSync: vi.fn((path) => {
+      if (typeof path === 'string' && path.startsWith('/stub/')) return true;
+      return originalExistSync(path);
     }),
   };
 });
 
 import { VideoExtractor } from '../src/extraction/languages/video-extractor';
 import { parseSubtitles } from '../src/extraction/subtitles/srt-parser';
-import { locateFfmpeg } from '../src/extraction/audio/ffmpeg';
-import { spawn } from 'child_process';
+import { locateFfmpeg, locateFfprobe } from '../src/extraction/audio/ffmpeg';
+import { spawn, execFile } from 'child_process';
 import type { SttConfig } from '../src/project-config';
 
 const locateFfmpegMock = vi.mocked(locateFfmpeg);
+const locateFfprobeMock = vi.mocked(locateFfprobe);
 const spawnMock = vi.mocked(spawn);
+const execFileMock = vi.mocked(execFile);
 
 const DISABLED_STT: SttConfig = {
   enabled: false,
@@ -109,6 +129,12 @@ const ENABLED_STT: SttConfig = {
 };
 
 const FAKE_VIDEO = '/project/video/lecture.mp4';
+
+beforeEach(() => {
+  locateFfmpegMock.mockResolvedValue(null);
+  locateFfprobeMock.mockResolvedValue(null);
+  spawnMock.mockImplementation(() => makeSpawnFail() as any);
+});
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -207,7 +233,8 @@ describe('VideoExtractor — gating (no ffmpeg)', () => {
 
   it('returns document-only when ffprobe exits non-zero', async () => {
     locateFfmpegMock.mockResolvedValue('/stub/ffmpeg');
-    spawnMock.mockReturnValue(makeSpawnFail() as any);
+    locateFfprobeMock.mockResolvedValue('/stub/ffprobe');
+    spawnMock.mockImplementation(() => makeSpawnFail() as any);
     const ext = new VideoExtractor(FAKE_VIDEO, '', DISABLED_STT);
     const result = await ext.extract();
     expect(result.nodes).toHaveLength(1);
@@ -217,6 +244,7 @@ describe('VideoExtractor — gating (no ffmpeg)', () => {
 
   it('emits document node with language "video"', async () => {
     locateFfmpegMock.mockResolvedValue(null);
+    locateFfprobeMock.mockResolvedValue(null);
     const ext = new VideoExtractor(FAKE_VIDEO, '', DISABLED_STT);
     const result = await ext.extract();
     expect(result.nodes[0]!.language).toBe('video');
@@ -225,6 +253,7 @@ describe('VideoExtractor — gating (no ffmpeg)', () => {
 
   it('never throws even when all extraction paths fail', async () => {
     locateFfmpegMock.mockRejectedValue(new Error('ffmpeg exploded'));
+    locateFfprobeMock.mockRejectedValue(new Error('ffprobe exploded'));
     const ext = new VideoExtractor(FAKE_VIDEO, '', DISABLED_STT);
     await expect(ext.extract()).resolves.toBeDefined();
     const result = await ext.extract();
@@ -239,11 +268,12 @@ describe('VideoExtractor — gating (no ffmpeg)', () => {
 describe('VideoExtractor — metadata extraction', () => {
   it('emits metadata chunk when ffprobe succeeds', async () => {
     locateFfmpegMock.mockResolvedValue('/stub/ffmpeg');
+    locateFfprobeMock.mockResolvedValue('/stub/ffprobe');
     // First spawn call = ffprobe (probeMetadata)
     // Second spawn call = ffmpeg embedded subtitle demux → fail (none present)
     spawnMock
-      .mockReturnValueOnce(makeSpawnResult(FFPROBE_CSV_OK) as any)
-      .mockReturnValue(makeSpawnFail() as any);
+      .mockImplementationOnce(() => makeSpawnResult(FFPROBE_CSV_OK) as any)
+      .mockImplementation(() => makeSpawnFail() as any);
 
     const ext = new VideoExtractor(FAKE_VIDEO, '', DISABLED_STT);
     const result = await ext.extract();
@@ -263,9 +293,10 @@ describe('VideoExtractor — metadata extraction', () => {
 
   it('metadata chunk carries correct metadata fields', async () => {
     locateFfmpegMock.mockResolvedValue('/stub/ffmpeg');
+    locateFfprobeMock.mockResolvedValue('/stub/ffprobe');
     spawnMock
-      .mockReturnValueOnce(makeSpawnResult(FFPROBE_CSV_OK) as any)
-      .mockReturnValue(makeSpawnFail() as any);
+      .mockImplementationOnce(() => makeSpawnResult(FFPROBE_CSV_OK) as any)
+      .mockImplementation(() => makeSpawnFail() as any);
 
     const ext = new VideoExtractor(FAKE_VIDEO, '', DISABLED_STT);
     const result = await ext.extract();
@@ -311,9 +342,10 @@ Second cue
     fs.writeFileSync(path.join(tmpDir, 'lecture.srt'), srt);
 
     locateFfmpegMock.mockResolvedValue('/stub/ffmpeg');
+    locateFfprobeMock.mockResolvedValue('/stub/ffprobe');
     spawnMock
       .mockReturnValueOnce(makeSpawnResult(FFPROBE_CSV_OK) as any) // probeMetadata
-      .mockReturnValue(makeSpawnFail() as any); // embedded subtitle demux → not present
+      .mockImplementation(() => makeSpawnFail() as any); // embedded subtitle demux → not present
 
     const ext = new VideoExtractor(videoPath, '', DISABLED_STT, tmpDir);
     const result = await ext.extract();
@@ -338,9 +370,10 @@ VTT subtitle line
     fs.writeFileSync(path.join(tmpDir, 'lecture.vtt'), vtt);
 
     locateFfmpegMock.mockResolvedValue('/stub/ffmpeg');
+    locateFfprobeMock.mockResolvedValue('/stub/ffprobe');
     spawnMock
-      .mockReturnValueOnce(makeSpawnResult(FFPROBE_CSV_OK) as any)
-      .mockReturnValue(makeSpawnFail() as any);
+      .mockImplementationOnce(() => makeSpawnResult(FFPROBE_CSV_OK) as any)
+      .mockImplementation(() => makeSpawnFail() as any);
 
     const ext = new VideoExtractor(videoPath, '', DISABLED_STT, tmpDir);
     const result = await ext.extract();
@@ -366,9 +399,10 @@ From VTT
     fs.writeFileSync(path.join(tmpDir, 'lecture.vtt'), vtt);
 
     locateFfmpegMock.mockResolvedValue('/stub/ffmpeg');
+    locateFfprobeMock.mockResolvedValue('/stub/ffprobe');
     spawnMock
-      .mockReturnValueOnce(makeSpawnResult(FFPROBE_CSV_OK) as any)
-      .mockReturnValue(makeSpawnFail() as any);
+      .mockImplementationOnce(() => makeSpawnResult(FFPROBE_CSV_OK) as any)
+      .mockImplementation(() => makeSpawnFail() as any);
 
     const ext = new VideoExtractor(videoPath, '', DISABLED_STT, tmpDir);
     const result = await ext.extract();
@@ -388,9 +422,10 @@ Timed subtitle
     fs.writeFileSync(path.join(tmpDir, 'lecture.srt'), srt);
 
     locateFfmpegMock.mockResolvedValue('/stub/ffmpeg');
+    locateFfprobeMock.mockResolvedValue('/stub/ffprobe');
     spawnMock
-      .mockReturnValueOnce(makeSpawnResult(FFPROBE_CSV_OK) as any)
-      .mockReturnValue(makeSpawnFail() as any);
+      .mockImplementationOnce(() => makeSpawnResult(FFPROBE_CSV_OK) as any)
+      .mockImplementation(() => makeSpawnFail() as any);
 
     const ext = new VideoExtractor(videoPath, '', DISABLED_STT, tmpDir);
     const result = await ext.extract();
@@ -411,9 +446,10 @@ Edge test
     fs.writeFileSync(path.join(tmpDir, 'lecture.srt'), srt);
 
     locateFfmpegMock.mockResolvedValue('/stub/ffmpeg');
+    locateFfprobeMock.mockResolvedValue('/stub/ffprobe');
     spawnMock
-      .mockReturnValueOnce(makeSpawnResult(FFPROBE_CSV_OK) as any)
-      .mockReturnValue(makeSpawnFail() as any);
+      .mockImplementationOnce(() => makeSpawnResult(FFPROBE_CSV_OK) as any)
+      .mockImplementation(() => makeSpawnFail() as any);
 
     const ext = new VideoExtractor(videoPath, '', DISABLED_STT, tmpDir);
     const result = await ext.extract();
@@ -433,9 +469,10 @@ Edge test
 describe('VideoExtractor — STT gating', () => {
   it('skips audio extraction when STT disabled', async () => {
     locateFfmpegMock.mockResolvedValue('/stub/ffmpeg');
+    locateFfprobeMock.mockResolvedValue('/stub/ffprobe');
     spawnMock
-      .mockReturnValueOnce(makeSpawnResult(FFPROBE_CSV_OK) as any)
-      .mockReturnValue(makeSpawnFail() as any);
+      .mockImplementationOnce(() => makeSpawnResult(FFPROBE_CSV_OK) as any)
+      .mockImplementation(() => makeSpawnFail() as any);
 
     const ext = new VideoExtractor(FAKE_VIDEO, '', DISABLED_STT);
     const result = await ext.extract();
@@ -453,7 +490,7 @@ describe('VideoExtractor — STT gating', () => {
     // ffprobe returns 7200s (2 hours)
     spawnMock
       .mockReturnValueOnce(makeSpawnResult('h264,video,1920,1080\n7200.000000\n') as any)
-      .mockReturnValue(makeSpawnFail() as any);
+      .mockImplementation(() => makeSpawnFail() as any);
 
     const shortCapStt: SttConfig = { ...ENABLED_STT, maxDurationSecs: 3600 };
     const ext = new VideoExtractor(FAKE_VIDEO, '', shortCapStt);

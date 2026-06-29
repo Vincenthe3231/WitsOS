@@ -6,10 +6,10 @@
  * offline recognizer accepts directly via a Float32Array view (no per-sample
  * conversion).
  *
- * FFmpeg binary resolution order:
- *   1. `ffmpegPath` override from WitsOS.json stt block.
- *   2. `ffmpeg-static` optional package (user-pulled, GPL-3.0, never bundled).
- *   3. System `ffmpeg` on PATH.
+ * FFmpeg/ffprobe binary resolution order:
+ *   1. Path override from WitsOS.json stt block.
+ *   2. `ffmpeg-ffprobe-static` optional package (bundles both ffmpeg + ffprobe).
+ *   3. System `ffmpeg`/`ffprobe` on PATH.
  *   Returns `null` when no binary is found.
  *
  * Security flags: `-nostdin`, `-protocol_whitelist file`, no network,
@@ -26,6 +26,21 @@ export interface AudioProbe {
   codec: string;
 }
 
+async function resolveStaticBin(name: 'ffmpegPath' | 'ffprobePath'): Promise<string | null> {
+  try {
+    const mod: any = await import('ffmpeg-ffprobe-static' as string);
+    const p: unknown = mod[name] ?? mod.default?.[name];
+    if (p && typeof p === 'string') {
+      const { realpathSync, existsSync } = await import('fs');
+      try {
+        const resolved = realpathSync(p);
+        if (existsSync(resolved)) return resolved;
+      } catch { /* junction / symlink resolution failed */ }
+    }
+  } catch { /* not installed */ }
+  return null;
+}
+
 /**
  * Locate an ffmpeg binary. Returns the path or `null` when absent.
  * `ffmpegPathOverride` comes from `stt.ffmpegPath` in WitsOS.json.
@@ -37,20 +52,8 @@ export async function locateFfmpeg(ffmpegPathOverride?: string): Promise<string 
     return null;
   }
 
-  // Try ffmpeg-static (optional, user-pulled, GPL-3.0).
-  try {
-    const mod: any = await import('ffmpeg-static' as string);
-    const p = mod.default ?? mod;
-    if (p && typeof p === 'string') {
-      // pnpm store uses Windows junctions which spawn() may not resolve.
-      // Try to resolve to real path; if it fails or path doesn't exist, skip and use system ffmpeg.
-      const { realpathSync, existsSync } = await import('fs');
-      try {
-        const resolved = realpathSync(p);
-        if (existsSync(resolved)) return resolved;
-      } catch { /* realpathSync or existsSync failed */ }
-    }
-  } catch { /* not installed */ }
+  const staticPath = await resolveStaticBin('ffmpegPath');
+  if (staticPath) return staticPath;
 
   // Fall back to system ffmpeg on PATH.
   try {
@@ -58,6 +61,31 @@ export async function locateFfmpeg(ffmpegPathOverride?: string): Promise<string 
     const { promisify } = await import('util');
     await promisify(execFile)('ffmpeg', ['-version'], { timeout: 3000 });
     return 'ffmpeg';
+  } catch { /* not found */ }
+
+  return null;
+}
+
+/**
+ * Locate an ffprobe binary. Returns the path or `null` when absent.
+ * `ffprobePathOverride` may come from config.
+ */
+export async function locateFfprobe(ffprobePathOverride?: string): Promise<string | null> {
+  if (ffprobePathOverride) {
+    const fs = await import('fs');
+    if (fs.existsSync(ffprobePathOverride)) return ffprobePathOverride;
+    return null;
+  }
+
+  const staticPath = await resolveStaticBin('ffprobePath');
+  if (staticPath) return staticPath;
+
+  // Fall back to system ffprobe on PATH.
+  try {
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    await promisify(execFile)('ffprobe', ['-version'], { timeout: 3000 });
+    return 'ffprobe';
   } catch { /* not found */ }
 
   return null;
@@ -122,8 +150,9 @@ export function decodeAudioToPcm(
  * Probe an audio file for duration and codec via ffprobe.
  * Falls back gracefully — returns `{ durationSecs: 0, codec: '' }` on failure.
  */
-export async function probeAudio(filePath: string, ffmpegBin: string): Promise<AudioProbe> {
-  const ffprobeBin = ffmpegBin.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+export async function probeAudio(filePath: string, _ffmpegBin: string): Promise<AudioProbe> {
+  const ffprobeBin = await locateFfprobe();
+  if (!ffprobeBin) return { durationSecs: 0, codec: '' };
 
   try {
     const { execFile } = await import('child_process');

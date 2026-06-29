@@ -90,7 +90,8 @@ Classifier (async, per-file)
 | 5 | OCR — images via opt-in ONNX OCR (PP-OCRv4 via onnxruntime-node; no Python). OCR worker thread delivered in Phase 6. Open spike: scanned-PDF rasterizer | ✅ done (OCR worker = Phase 6) |
 | 6a | **Generalized worker pool** (`src/workers/JobPool`) — parse/ocr/stt lanes off main thread, recycle, crash-respawn, AbortSignal, graceful shutdown | ✅ done |
 | 6b | **Audio STT** — `sherpa-onnx` backend seam, FFmpeg decode wrapper, `AudioExtractor`, 8 audio extensions, `stt` + `workers` config blocks, interactive opt-in prompt | ✅ done |
-| 6c | Video (audio-track STT + embedded subtitles + keyframe extraction) | ⬜ deferred |
+| 6c | Video core — metadata probe (ffprobe), subtitle extraction (sidecar .srt/.vtt + embedded demux), audio-track STT via AudioExtractor | ✅ done |
+| 6d | Video keyframes — ffmpeg thumbnail extraction + OCR pipeline (feeds Phase 5 OcrBackend) | ⬜ deferred |
 | 7 | Embeddings + vector store — sqlite-vec or sidecar; local-first model | ⬜ |
 | 8 | Cross-document graph + unified search (FTS + vector + graph blended) | ⬜ |
 
@@ -161,6 +162,6 @@ Before embeddings land, these gaps must close:
 - Phase 5: Image OCR wired — pluggable `OcrBackend` (PP-OCRv4 via onnxruntime-node, no Python), `ImageExtractor`, `WitsOS.json` `ocr` block. Open spike: scanned-PDF rasterizer.
 - Phase 6a: Generalized `JobPool` (`src/workers/`) — parse/ocr/stt lanes, recycle-after-N, timeout, crash-respawn, AbortSignal cancel, graceful shutdown. OCR moved off main thread (`ocr-worker.ts`).
 - Phase 6b: Audio STT — **fully implemented**. `SttBackend` seam wired to real WASM `sherpa-onnx` API (`createOfflineRecognizer` + `createStream`/`acceptWaveform`/`decode`/`getResult`). Model resolver via `resolveModel` (downloads whisper-base/-small/-medium to `~/.witsos/models/`, prefers int8 export for speed). FFmpeg decode (`f32le` PCM → Float32Array). `AudioExtractor` emits document + section nodes per 28s window (timestamps in chunk metadata). 8 audio extensions in `EXTENSION_MAP`. `stt`/`workers` config blocks in `WitsOS.json`. Interactive TTY opt-in prompt. Tests: 10/10 pass (gating matrix, model resolution, PCM conversion). Verified: smoke test = real transcription (3 segments, text match, 35s for 60s audio int8 WASM).
-- Phase 6c (video) deferred — audio-track STT + embedded subtitle extraction + keyframes are their own phase.
+- Phase 6c: Video core **complete** — `VideoExtractor` (metadata probe via ffprobe, sidecar .srt/.vtt + embedded subtitle demux, audio-track STT delegated to `AudioExtractor`), `srt-parser.ts`, `TempFileMgr`, `MediaExtractorRegistry` wired, 10 video extensions in `EXTENSION_MAP`. Tests: `__tests__/video-extractor.test.ts` (parseSubtitles unit, gating matrix, sidecar subtitle path, STT gating, registry). Keyframe extraction deferred to Phase 6d (OCR-dependent, separate sub-phase).
 
 Default install still pure WASM + `node:sqlite`. STT/FFmpeg/sherpa-onnx/models all opt-in, never bundled. Rust stays on shelf. Next: Phase 7 (embeddings) reuses `JobPool` `embed` lane.

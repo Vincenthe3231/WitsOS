@@ -1,5 +1,6 @@
 allowBuilds:
   esbuild: true
+  ffmpeg-ffprobe-static: true
   ffmpeg-static: true
   onnxruntime-node: true
   sharp: true

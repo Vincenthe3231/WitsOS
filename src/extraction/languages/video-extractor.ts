@@ -16,7 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
-import { locateFfmpeg } from '../audio/ffmpeg';
+import { locateFfmpeg, locateFfprobe } from '../audio/ffmpeg';
 import { AudioExtractor } from './audio-extractor';
 import { parseSubtitles } from '../subtitles/srt-parser';
 import { chunkId } from '../chunker';
@@ -160,28 +160,10 @@ export class VideoExtractor {
     videoCodec: string;
   } | null> {
     try {
-      const ffmpegBin = await locateFfmpeg();
-      if (!ffmpegBin) return null;
+      const ffprobeBin = await locateFfprobe();
+      if (!ffprobeBin) return null;
 
-      // Derive ffprobe path from ffmpeg path.
-      // ffmpeg-static only bundles ffmpeg, not ffprobe — fall back to system ffprobe.
-      const derivedFfprobe = ffmpegBin === 'ffmpeg'
-        ? 'ffprobe'
-        : ffmpegBin.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
-
-      // If using system ffprobe, validate it exists before spawning to avoid ENOENT.
-      if (derivedFfprobe === 'ffprobe') {
-        try {
-          const { execFile } = await import('child_process');
-          const { promisify } = await import('util');
-          await promisify(execFile)('ffprobe', ['-version'], { timeout: 3000 });
-        } catch {
-          // System ffprobe not on PATH — degrade gracefully
-          return null;
-        }
-      }
-
-      const output = await execAsync(derivedFfprobe, [
+      const output = await execAsync(ffprobeBin, [
         '-v', 'error',
         '-show_entries', 'format=duration',
         '-show_entries', 'stream=codec_name,codec_type,width,height',

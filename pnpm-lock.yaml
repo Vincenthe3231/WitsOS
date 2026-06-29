@@ -29,9 +29,9 @@ importers:
       fast-wrap-ansi:
         specifier: ^0.2.0
         version: 0.2.2
-      ffmpeg-static:
-        specifier: ^5.3.0
-        version: 5.3.0
+      ffmpeg-ffprobe-static:
+        specifier: 6.1.2-rc.1
+        version: 6.1.2-rc.1
       ignore:
         specifier: ^7.0.5
         version: 7.0.5
@@ -677,9 +677,9 @@ packages:
   fast-wrap-ansi@0.2.2:
     resolution: {integrity: sha512-7F2Fl+TjRSenLqlU3UjSH0iyqopqoZIu7eZVpEirP2g1GtWa2G/ecEmBdgz31+Mxr+ELclgg6sokpSFIQiZ02Q==}
 
-  ffmpeg-static@5.3.0:
-    resolution: {integrity: sha512-H+K6sW6TiIX6VGend0KQwthe+kaceeH/luE8dIZyOP35ik7ahYojDuqlTV1bOrtEwl01sy2HFNGQfi5IDJvotg==}
-    engines: {node: '>=16'}
+  ffmpeg-ffprobe-static@6.1.2-rc.1:
+    resolution: {integrity: sha512-zHHGmR76ebnto/TU4qGTnQPqBBKVLTalJG6JdzsZujd9CWybojK4lNzW51154bItUEf12WHiHzSBmvkEr+VIXg==}
+    engines: {node: '>=10'}
 
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
@@ -1403,7 +1403,7 @@ snapshots:
     dependencies:
       fast-string-width: 3.0.2
 
-  ffmpeg-static@5.3.0:
+  ffmpeg-ffprobe-static@6.1.2-rc.1:
     dependencies:
       '@derhuerst/http-basic': 8.2.4
       env-paths: 2.2.1
