@@ -1844,6 +1844,11 @@ export class ExtractionOrchestrator {
       const stt = loadSttConfig(this.rootDir);
       return (await new AudioExtractor(filePath, content, stt, this.rootDir).extract()) as ExtractionResult;
     }
+    if (language === 'video') {
+      const { VideoExtractor } = await import('./languages/video-extractor');
+      const stt = loadSttConfig(this.rootDir);
+      return (await new VideoExtractor(filePath, content, stt, this.rootDir).extract()) as ExtractionResult;
+    }
     // Default async extractor: PDF.
     const { PdfExtractor } = await import('./languages/pdf-extractor');
     return (await new PdfExtractor(filePath, content).extract()) as ExtractionResult;
