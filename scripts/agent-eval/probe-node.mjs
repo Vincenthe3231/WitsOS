@@ -15,6 +15,6 @@ const ToolHandler = tools.ToolHandler ?? tools.default?.ToolHandler;
 
 const cg = WitsOS.openSync(repo);
 const h = new ToolHandler(cg);
-const res = await h.execute('WitsOS_node', { symbol, includeCode: code === 'code' });
+const res = await h.execute('witsos_node', { symbol, includeCode: code === 'code' });
 console.log(res.content?.[0]?.text ?? '(no text)');
 try { cg.close?.(); } catch {}

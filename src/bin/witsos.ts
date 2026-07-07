@@ -1169,7 +1169,7 @@ program
 
       const args: Record<string, unknown> = { query: queryParts.join(' ') };
       if (options.maxFiles) args.maxFiles = parseInt(options.maxFiles, 10);
-      const result = await handler.execute('WitsOS_explore', args);
+      const result = await handler.execute('witsos_explore', args);
 
       console.log(result.content[0]?.text ?? '');
       cg.destroy();
@@ -1254,7 +1254,7 @@ program
           if (!keyworded && !codeTokens.some((t) => cg.getNodesByName(t).length > 0)) return;
           const { ToolHandler } = await import('../mcp/tools');
           const handler = new ToolHandler(cg);
-          const result = await handler.execute('WitsOS_explore', { query: prompt });
+          const result = await handler.execute('witsos_explore', { query: prompt });
           const text = result.content[0]?.text ?? '';
           if (!result.isError && text.trim()) {
             // Cap the injection so a large-repo explore can't flood the prompt.
@@ -1336,7 +1336,7 @@ program
       if (options.limit) args.limit = parseInt(options.limit, 10);
       if (options.symbolsOnly) args.symbolsOnly = true;
 
-      const result = await handler.execute('WitsOS_node', args);
+      const result = await handler.execute('witsos_node', args);
 
       console.log(result.content[0]?.text ?? '');
       cg.destroy();
