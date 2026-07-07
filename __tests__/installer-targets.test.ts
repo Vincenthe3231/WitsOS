@@ -673,6 +673,67 @@ describe('Installer targets — partial-state idempotency', () => {
     expect(result.notes?.join(' ')).toMatch(/no project-local config/);
   });
 
+  it('desktop: rejects --location=local with a clear note (single global config file)', () => {
+    const desktop = getTarget('desktop')!;
+    expect(desktop.supportsLocation('local')).toBe(false);
+    const result = desktop.install('local', { autoAllow: true });
+    expect(result.files).toEqual([]);
+    expect(result.notes?.join(' ')).toMatch(/no project-local config/);
+  });
+
+  it('desktop: install writes claude_desktop_config.json (mcpServers.witsos)', () => {
+    const desktop = getTarget('desktop')!;
+    const result = desktop.install('global', { autoAllow: true });
+    expect(result.files).toHaveLength(1);
+
+    const configPath = desktop.describePaths('global')[0];
+    expect(configPath).toContain('claude_desktop_config.json');
+    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(cfg.mcpServers.witsos).toEqual({ type: 'stdio', command: 'witsos', args: ['serve', '--mcp'] });
+  });
+
+  it.runIf(process.platform === 'win32')('desktop: on Windows resolves under %APPDATA%\\Claude', () => {
+    const desktop = getTarget('desktop')!;
+    const configPath = desktop.describePaths('global')[0];
+    expect(configPath).toBe(path.join(process.env.APPDATA!, 'Claude', 'claude_desktop_config.json'));
+  });
+
+  it.runIf(process.platform === 'darwin')('desktop: on macOS resolves under ~/Library/Application Support/Claude', () => {
+    const desktop = getTarget('desktop')!;
+    const configPath = desktop.describePaths('global')[0];
+    expect(configPath).toBe(
+      path.join(tmpHome, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+    );
+  });
+
+  it('desktop: install preserves a pre-existing sibling MCP server', () => {
+    const desktop = getTarget('desktop')!;
+    const configPath = desktop.describePaths('global')[0];
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({ mcpServers: { other: { command: 'x' } } }, null, 2) + '\n');
+
+    desktop.install('global', { autoAllow: true });
+
+    const after = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(after.mcpServers.other).toBeDefined();
+    expect(after.mcpServers.witsos).toBeDefined();
+  });
+
+  it('desktop: uninstall strips witsos but leaves sibling MCP servers intact', () => {
+    const desktop = getTarget('desktop')!;
+    desktop.install('global', { autoAllow: true });
+    const configPath = desktop.describePaths('global')[0];
+    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    cfg.mcpServers.other = { command: 'x' };
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + '\n');
+
+    desktop.uninstall('global');
+
+    const after = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(after.mcpServers.witsos).toBeUndefined();
+    expect(after.mcpServers.other).toBeDefined();
+  });
+
   it('antigravity: does not write GEMINI.md (only gemini target owns instructions)', () => {
     const antigravity = getTarget('antigravity')!;
     antigravity.install('global', { autoAllow: true });

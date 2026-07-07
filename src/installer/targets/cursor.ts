@@ -64,7 +64,7 @@ function mcpJsonPath(loc: Location): string {
  * root. There is no global equivalent.
  */
 function rulesPath(): string {
-  return path.join(process.cwd(), '.cursor', 'rules', 'WitsOS.mdc');
+  return path.join(process.cwd(), '.cursor', 'rules', 'witsos.mdc');
 }
 
 /**
@@ -96,7 +96,7 @@ class CursorTarget implements AgentTarget {
   detect(loc: Location): DetectionResult {
     const mcpPath = mcpJsonPath(loc);
     const config = readJsonFile(mcpPath);
-    const alreadyConfigured = !!config.mcpServers?.WitsOS;
+    const alreadyConfigured = !!config.mcpServers?.witsos || !!config.mcpServers?.WitsOS;
     // "Installed" heuristic: does ~/.cursor exist (global) or has the
     // user opted into a project-local cursor config dir?
     const installed = loc === 'global'
@@ -110,13 +110,20 @@ class CursorTarget implements AgentTarget {
 
     files.push(writeMcpEntry(loc));
 
-    // We no longer write `.cursor/rules/WitsOS.mdc` — the WitsOS
+    // Clean up old capital-WitsOS entries (pre-casing-fix installs).
+    const capitalCleanup = cleanupLegacyCapitalWitsOS(loc);
+    if (capitalCleanup.action === 'removed') files.push(capitalCleanup);
+
+    // We no longer write `.cursor/rules/witsos.mdc` — the WitsOS
     // usage guidance ships in the MCP server's `initialize` response,
     // the single source of truth (issue #529). Strip a rules file a
-    // previous install created so an upgrade self-heals.
+    // previous install created so an upgrade self-heals. Also clean
+    // up any legacy `WitsOS.mdc` from pre-casing-fix installs.
     if (loc === 'local') {
       const rulesCleanup = removeRulesEntry();
       if (rulesCleanup.action === 'removed') files.push(rulesCleanup);
+      const legacyCleanup = removeLegacyRulesEntry();
+      if (legacyCleanup.action === 'removed') files.push(legacyCleanup);
     }
 
     return {
@@ -130,8 +137,16 @@ class CursorTarget implements AgentTarget {
 
     const mcpPath = mcpJsonPath(loc);
     const config = readJsonFile(mcpPath);
+    let removed = false;
+    if (config.mcpServers?.witsos) {
+      delete config.mcpServers.witsos;
+      removed = true;
+    }
     if (config.mcpServers?.WitsOS) {
       delete config.mcpServers.WitsOS;
+      removed = true;
+    }
+    if (removed) {
       if (Object.keys(config.mcpServers).length === 0) {
         delete config.mcpServers;
       }
@@ -143,6 +158,8 @@ class CursorTarget implements AgentTarget {
 
     if (loc === 'local') {
       files.push(removeRulesEntry());
+      const legacyCleanup = removeLegacyRulesEntry();
+      if (legacyCleanup.action === 'removed') files.push(legacyCleanup);
     }
 
     return { files };
@@ -150,7 +167,7 @@ class CursorTarget implements AgentTarget {
 
   printConfig(loc: Location): string {
     const target = mcpJsonPath(loc);
-    const snippet = JSON.stringify({ mcpServers: { WitsOS: buildCursorMcpConfig(loc) } }, null, 2);
+    const snippet = JSON.stringify({ mcpServers: { witsos: buildCursorMcpConfig(loc) } }, null, 2);
     return `# Add to ${target}\n\n${snippet}\n`;
   }
 
@@ -177,7 +194,7 @@ function buildCursorMcpConfig(loc: Location): { type: string; command: string; a
 function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   const file = mcpJsonPath(loc);
   const existing = readJsonFile(file);
-  const before = existing.mcpServers?.WitsOS;
+  const before = existing.mcpServers?.witsos;
   const after = buildCursorMcpConfig(loc);
 
   if (jsonDeepEqual(before, after)) {
@@ -185,9 +202,32 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   }
   const action: 'created' | 'updated' = before ? 'updated' : (fs.existsSync(file) ? 'updated' : 'created');
   if (!existing.mcpServers) existing.mcpServers = {};
-  existing.mcpServers.WitsOS = after;
+  existing.mcpServers.witsos = after;
+  // Clean up old capital-WitsOS entry if present (migration on upgrade)
+  if (existing.mcpServers.WitsOS) {
+    delete existing.mcpServers.WitsOS;
+  }
   writeJsonFile(file, existing);
   return { path: file, action };
+}
+
+/**
+ * Remove capital-WitsOS MCP entry from .cursor/mcp.json (if present) when
+ * migrating from pre-casing-fix installs. This cleans up the stale entry
+ * so users don't end up with both WitsOS and witsos after upgrading.
+ */
+function cleanupLegacyCapitalWitsOS(loc: Location): WriteResult['files'][number] {
+  const mcpPath = mcpJsonPath(loc);
+  const config = readJsonFile(mcpPath);
+  if (!config.mcpServers?.WitsOS) {
+    return { path: mcpPath, action: 'unchanged' };
+  }
+  delete config.mcpServers.WitsOS;
+  if (Object.keys(config.mcpServers).length === 0) {
+    delete config.mcpServers;
+  }
+  writeJsonFile(mcpPath, config);
+  return { path: mcpPath, action: 'removed' };
 }
 
 /**
@@ -195,7 +235,7 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
  * install — see issue #529).
  *
  * Unlike the shared CLAUDE.md / AGENTS.md files (where WitsOS owns
- * only a marker-delimited section), `.cursor/rules/WitsOS.mdc` is a
+ * only a marker-delimited section), `.cursor/rules/witsos.mdc` is a
  * file we create OUTRIGHT — the frontmatter is ours too. So a plain
  * `removeMarkedSection` is wrong here: it would strip our instruction
  * block but leave the orphaned `description: WitsOS ...` frontmatter
@@ -217,15 +257,30 @@ function removeRulesEntry(): WriteResult['files'][number] {
   }
 
   const ourFrontmatter = MDC_FRONTMATTER.trim();
-  const startIdx = content.indexOf(WitsOS_SECTION_START);
-  const endIdx = content.indexOf(WitsOS_SECTION_END);
+  const legacyStartMarker = '<!-- WITSOS_START -->';
+  const legacyEndMarker = '<!-- WITSOS_END -->';
+
+  // Check for current markers first
+  let startIdx = content.indexOf(WitsOS_SECTION_START);
+  let endIdx = content.indexOf(WitsOS_SECTION_END);
+  let endMarker = WitsOS_SECTION_END;
+
+  // If not found, check for legacy markers
+  if (startIdx === -1) {
+    startIdx = content.indexOf(legacyStartMarker);
+    endMarker = legacyEndMarker;
+    if (startIdx !== -1) {
+      endIdx = content.indexOf(legacyEndMarker);
+    }
+  }
 
   // Our marked block is present — strip it, then decide what's left.
   if (startIdx !== -1 && endIdx > startIdx) {
     const before = content.substring(0, startIdx).trimEnd();
-    const after = content.substring(endIdx + WitsOS_SECTION_END.length).trimStart();
+    const after = content.substring(endIdx + endMarker.length).trimStart();
     const remainder = (before + (before && after ? '\n\n' : '') + after).trim();
-    if (remainder === '' || remainder === ourFrontmatter) {
+    const shouldDelete = remainder === '' || remainder === ourFrontmatter;
+    if (shouldDelete) {
       try { fs.unlinkSync(file); } catch { /* ignore */ }
     } else {
       atomicWriteFileSync(file, remainder + '\n');
@@ -242,6 +297,17 @@ function removeRulesEntry(): WriteResult['files'][number] {
 
   // Foreign content we don't recognize — leave it alone.
   return { path: file, action: 'not-found' };
+}
+
+/**
+ * Delete the legacy `WitsOS.mdc` rules file (from pre-casing-fix installs)
+ * as a migration cleanup step.
+ */
+function removeLegacyRulesEntry(): WriteResult['files'][number] {
+  const file = path.join(process.cwd(), '.cursor', 'rules', 'WitsOS.mdc');
+  if (!fs.existsSync(file)) return { path: file, action: 'not-found' };
+  try { fs.unlinkSync(file); } catch { /* ignore */ }
+  return { path: file, action: 'removed' };
 }
 
 export const cursorTarget: AgentTarget = new CursorTarget();

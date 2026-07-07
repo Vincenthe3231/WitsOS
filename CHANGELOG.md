@@ -25,6 +25,7 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Audio files (`.mp3`, `.wav`, `.m4a`, `.aac`, `.flac`, `.ogg`, `.opus`, `.wma`) are now indexed as searchable transcripts when speech-to-text is enabled. Enable it once in `WitsOS.json` — `{ "stt": { "enabled": true } }` — and install the optional `sherpa-onnx` + `ffmpeg-static` packages; transcripts are searchable in your knowledge base with per-segment timestamps so you can jump to the exact moment in a recording. The default install is completely unchanged — no native build, no download — and with STT off an audio file is tracked with no text, never left out or partially indexed. Transcription runs fully offline on your machine; nothing is sent to any service. When `witsos init` finds audio files and STT is not yet configured, it offers to enable it interactively with a single keypress.
 
 - OCR and STT now run in dedicated worker threads (off the main thread), so a large image or audio file can transcribe in the background while code indexing continues. The worker pool (`src/workers/`) also generalizes the existing parse-worker so future extraction backends (embeddings, Phase 7) inherit the same lifecycle management for free.
+- `witsos install --target desktop` now registers WitsOS as an MCP server in Claude Desktop. Claude Desktop bridges its own locally-configured MCP servers into Claude Cowork sessions automatically, so this is also how you make an indexed codebase's search tools reachable from Cowork, whose sandbox can't launch a local server on its own.
 
 ### Fixes
 

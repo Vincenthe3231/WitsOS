@@ -49,7 +49,7 @@ function mcpJsonPath(loc: Location): string {
   return path.join(configDir(loc), 'settings', 'mcp.json');
 }
 function steeringPath(loc: Location): string {
-  return path.join(configDir(loc), 'steering', 'WitsOS.md');
+  return path.join(configDir(loc), 'steering', 'witsos.md');
 }
 
 class KiroTarget implements AgentTarget {
@@ -64,7 +64,7 @@ class KiroTarget implements AgentTarget {
   detect(loc: Location): DetectionResult {
     const file = mcpJsonPath(loc);
     const config = readJsonFile(file);
-    const alreadyConfigured = !!config.mcpServers?.WitsOS;
+    const alreadyConfigured = !!config.mcpServers?.witsos || !!config.mcpServers?.WitsOS;
     const installed = loc === 'global'
       ? fs.existsSync(configDir('global')) || fs.existsSync(file)
       : fs.existsSync(file) || fs.existsSync(configDir('local'));
@@ -75,12 +75,19 @@ class KiroTarget implements AgentTarget {
     const files: WriteResult['files'] = [];
     files.push(writeMcpEntry(loc));
 
+    // Clean up old capital-WitsOS entries (pre-casing-fix installs).
+    const capitalCleanup = cleanupLegacyCapitalWitsOS(loc);
+    if (capitalCleanup.action === 'removed') files.push(capitalCleanup);
+
     // The steering doc is no longer written — the WitsOS usage
     // guidance ships in the MCP server's `initialize` response (issue
-    // #529). Delete a `WitsOS.md` a previous install created so an
-    // upgrade self-heals.
+    // #529). Delete a `witsos.md` a previous install created so an
+    // upgrade self-heals. Also clean up any legacy `WitsOS.md` from
+    // pre-casing-fix installs.
     const steeringCleanup = removeSteeringEntry(loc);
     if (steeringCleanup.action === 'removed') files.push(steeringCleanup);
+    const legacySteeringCleanup = removeLegacySteeringEntry(loc);
+    if (legacySteeringCleanup.action === 'removed') files.push(legacySteeringCleanup);
 
     return {
       files,
@@ -101,8 +108,16 @@ class KiroTarget implements AgentTarget {
 
     const file = mcpJsonPath(loc);
     const config = readJsonFile(file);
+    let removed = false;
+    if (config.mcpServers?.witsos) {
+      delete config.mcpServers.witsos;
+      removed = true;
+    }
     if (config.mcpServers?.WitsOS) {
       delete config.mcpServers.WitsOS;
+      removed = true;
+    }
+    if (removed) {
       if (Object.keys(config.mcpServers).length === 0) {
         delete config.mcpServers;
       }
@@ -113,13 +128,15 @@ class KiroTarget implements AgentTarget {
     }
 
     files.push(removeSteeringEntry(loc));
+    const legacyCleanup = removeLegacySteeringEntry(loc);
+    if (legacyCleanup.action === 'removed') files.push(legacyCleanup);
 
     return { files };
   }
 
   printConfig(loc: Location): string {
     const target = mcpJsonPath(loc);
-    const snippet = JSON.stringify({ mcpServers: { WitsOS: getMcpServerConfig() } }, null, 2);
+    const snippet = JSON.stringify({ mcpServers: { witsos: getMcpServerConfig() } }, null, 2);
     return `# Add to ${target}\n\n${snippet}\n`;
   }
 
@@ -134,7 +151,7 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   const existing = readJsonFile(file);
-  const before = existing.mcpServers?.WitsOS;
+  const before = existing.mcpServers?.witsos;
   const after = getMcpServerConfig();
 
   if (jsonDeepEqual(before, after)) {
@@ -143,20 +160,54 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   const action: 'created' | 'updated' =
     before ? 'updated' : (fs.existsSync(file) ? 'updated' : 'created');
   if (!existing.mcpServers) existing.mcpServers = {};
-  existing.mcpServers.WitsOS = after;
+  existing.mcpServers.witsos = after;
+  // Clean up old capital-WitsOS entry if present (migration on upgrade)
+  if (existing.mcpServers.WitsOS) {
+    delete existing.mcpServers.WitsOS;
+  }
   writeJsonFile(file, existing);
   return { path: file, action };
 }
 
 /**
+ * Remove capital-WitsOS MCP entry from mcp.json (if present) when
+ * migrating from pre-casing-fix installs. This cleans up the stale entry
+ * so users don't end up with both WitsOS and witsos after upgrading.
+ */
+function cleanupLegacyCapitalWitsOS(loc: Location): WriteResult['files'][number] {
+  const file = mcpJsonPath(loc);
+  const config = readJsonFile(file);
+  if (!config.mcpServers?.WitsOS) {
+    return { path: file, action: 'unchanged' };
+  }
+  delete config.mcpServers.WitsOS;
+  if (Object.keys(config.mcpServers).length === 0) {
+    delete config.mcpServers;
+  }
+  writeJsonFile(file, config);
+  return { path: file, action: 'removed' };
+}
+
+/**
  * Delete the steering file we own. If a user has hand-edited the file
- * out of recognition we still remove it — WitsOS.md is a name we
+ * out of recognition we still remove it — witsos.md is a name we
  * claim, and a partial install leaving the file behind is worse than
  * a clean delete. Used by both install (self-heal on upgrade — see
  * issue #529) and uninstall.
  */
 function removeSteeringEntry(loc: Location): WriteResult['files'][number] {
   const file = steeringPath(loc);
+  if (!fs.existsSync(file)) return { path: file, action: 'not-found' };
+  try { fs.unlinkSync(file); } catch { /* ignore */ }
+  return { path: file, action: 'removed' };
+}
+
+/**
+ * Delete the legacy `WitsOS.md` steering file (from pre-casing-fix installs)
+ * as a migration cleanup step.
+ */
+function removeLegacySteeringEntry(loc: Location): WriteResult['files'][number] {
+  const file = path.join(configDir(loc), 'steering', 'WitsOS.md');
   if (!fs.existsSync(file)) return { path: file, action: 'not-found' };
   try { fs.unlinkSync(file); } catch { /* ignore */ }
   return { path: file, action: 'removed' };

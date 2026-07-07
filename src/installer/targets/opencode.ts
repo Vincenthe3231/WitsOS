@@ -118,7 +118,7 @@ function parseConfig(text: string): Record<string, any> {
 function getOpencodeServerEntry(): { type: string; command: string[]; enabled: boolean } {
   return {
     type: 'local',
-    command: ['WitsOS', 'serve', '--mcp'],
+    command: ['witsos', 'serve', '--mcp'],
     enabled: true,
   };
 }
@@ -137,7 +137,7 @@ class OpencodeTarget implements AgentTarget {
   detect(loc: Location): DetectionResult {
     const file = configPath(loc);
     const config = parseConfig(readConfigText(file));
-    const alreadyConfigured = !!config.mcp?.WitsOS;
+    const alreadyConfigured = !!config.mcp?.witsos || !!config.mcp?.WitsOS;
     // Global: the XDG dir is what current opencode creates on first run; the
     // legacy %APPDATA% dir still counts as "opencode present" so a re-install
     // can sweep the stale pre-#535 entry out of it.
@@ -151,6 +151,10 @@ class OpencodeTarget implements AgentTarget {
   install(loc: Location, _opts: InstallOptions): WriteResult {
     const files: WriteResult['files'] = [];
     files.push(writeMcpEntry(loc));
+
+    // Clean up old capital-WitsOS entries (pre-casing-fix installs).
+    const capitalCleanup = cleanupLegacyCapitalWitsOS(loc);
+    if (capitalCleanup.action === 'removed') files.push(capitalCleanup);
 
     // AGENTS.md gets the short marker-fenced WitsOS block (#704):
     // subagents and non-MCP harnesses read AGENTS.md but never the MCP
@@ -176,7 +180,7 @@ class OpencodeTarget implements AgentTarget {
     const target = configPath(loc);
     const snippet = JSON.stringify({
       $schema: 'https://opencode.ai/config.json',
-      mcp: { WitsOS: getOpencodeServerEntry() },
+      mcp: { witsos: getOpencodeServerEntry() },
     }, null, 2);
     return `# Add to ${target}\n\n${snippet}\n`;
   }
@@ -199,7 +203,7 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   }
 
   const config = parseConfig(text);
-  const before = config.mcp?.WitsOS;
+  const before = config.mcp?.witsos;
   const after = getOpencodeServerEntry();
 
   if (jsonDeepEqual(before, after)) {
@@ -214,9 +218,17 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
     text = applyEdits(text, schemaEdits);
   }
 
+  // Clean up old capital-WitsOS entry if present (migration on upgrade)
+  if (config.mcp?.WitsOS) {
+    const deleteEdits = modify(text, ['mcp', 'WitsOS'], undefined, {
+      formattingOptions: FORMATTING,
+    });
+    text = applyEdits(text, deleteEdits);
+  }
+
   // Surgical edit — preserves comments, formatting, and order of
   // every key we don't touch.
-  const edits = modify(text, ['mcp', 'WitsOS'], after, {
+  const edits = modify(text, ['mcp', 'witsos'], after, {
     formattingOptions: FORMATTING,
   });
   const updated = applyEdits(text, edits);
@@ -226,28 +238,63 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
 }
 
 /**
- * Surgically drop `mcp.WitsOS` from one config file. Leaves sibling
- * servers, comments, and formatting untouched; drops an emptied `mcp`
+ * Surgically drop `mcp.witsos` from one config file (or capital-WitsOS for migration).
+ * Leaves sibling servers, comments, and formatting untouched; drops an emptied `mcp`
  * wrapper too. Shared by uninstall and the legacy-%APPDATA% sweep.
  */
 function removeMcpEntryAt(file: string): WriteResult['files'][number] {
   if (!fs.existsSync(file)) return { path: file, action: 'not-found' };
   const text = readConfigText(file);
   const config = parseConfig(text);
-  if (!config.mcp?.WitsOS) return { path: file, action: 'not-found' };
+  if (!config.mcp?.witsos && !config.mcp?.WitsOS) return { path: file, action: 'not-found' };
 
-  let edits = modify(text, ['mcp', 'WitsOS'], undefined, {
-    formattingOptions: FORMATTING,
-  });
-  let updated = applyEdits(text, edits);
+  let updated = text;
+
+  // Remove both the new lowercase and legacy capital keys
+  if (config.mcp?.witsos) {
+    const edits = modify(text, ['mcp', 'witsos'], undefined, {
+      formattingOptions: FORMATTING,
+    });
+    updated = applyEdits(text, edits);
+  }
+
+  if (config.mcp?.WitsOS) {
+    const edits = modify(updated, ['mcp', 'WitsOS'], undefined, {
+      formattingOptions: FORMATTING,
+    });
+    updated = applyEdits(updated, edits);
+  }
 
   // If `mcp` is now an empty object, drop the wrapper too.
   const afterParsed = parseConfig(updated);
   if (afterParsed.mcp && typeof afterParsed.mcp === 'object' &&
       Object.keys(afterParsed.mcp).length === 0) {
-    edits = modify(updated, ['mcp'], undefined, { formattingOptions: FORMATTING });
+    const edits = modify(updated, ['mcp'], undefined, { formattingOptions: FORMATTING });
     updated = applyEdits(updated, edits);
   }
+
+  atomicWriteFileSync(file, updated);
+  return { path: file, action: 'removed' };
+}
+
+/**
+ * Remove capital-WitsOS MCP entry from the current config (if present) when
+ * migrating from pre-casing-fix installs. This cleans up the stale entry
+ * so users don't end up with both WitsOS and witsos after upgrading.
+ */
+function cleanupLegacyCapitalWitsOS(loc: Location): WriteResult['files'][number] {
+  const file = configPath(loc);
+  if (!fs.existsSync(file)) return { path: file, action: 'unchanged' };
+  const text = readConfigText(file);
+  const config = parseConfig(text);
+  if (!config.mcp?.WitsOS) {
+    return { path: file, action: 'unchanged' };
+  }
+
+  const edits = modify(text, ['mcp', 'WitsOS'], undefined, {
+    formattingOptions: FORMATTING,
+  });
+  const updated = applyEdits(text, edits);
 
   atomicWriteFileSync(file, updated);
   return { path: file, action: 'removed' };
@@ -269,7 +316,17 @@ function cleanupLegacyWindowsState(): WriteResult['files'] {
     if (res.action === 'removed') out.push(res);
   }
   const agents = path.join(dir, 'AGENTS.md');
-  const action = removeMarkedSection(agents, WitsOS_SECTION_START, WitsOS_SECTION_END);
+  const legacyStart = '<!-- WITSOS_START -->';
+  const legacyEnd = '<!-- WITSOS_END -->';
+
+  // Try removing with current markers first
+  let action = removeMarkedSection(agents, WitsOS_SECTION_START, WitsOS_SECTION_END);
+
+  // If not found, try legacy markers
+  if (action === 'not-found' && fs.existsSync(agents)) {
+    action = removeMarkedSection(agents, legacyStart, legacyEnd);
+  }
+
   if (action === 'removed') out.push({ path: agents, action });
   return out;
 }
@@ -281,7 +338,17 @@ function cleanupLegacyWindowsState(): WriteResult['files'] {
  */
 function removeInstructionsEntry(loc: Location): WriteResult['files'][number] {
   const file = instructionsPath(loc);
-  const action = removeMarkedSection(file, WitsOS_SECTION_START, WitsOS_SECTION_END);
+  const legacyStart = '<!-- WITSOS_START -->';
+  const legacyEnd = '<!-- WITSOS_END -->';
+
+  // Try removing with current markers first
+  let action = removeMarkedSection(file, WitsOS_SECTION_START, WitsOS_SECTION_END);
+
+  // If not found, try legacy markers
+  if (action === 'not-found' && fs.existsSync(file)) {
+    action = removeMarkedSection(file, legacyStart, legacyEnd);
+  }
+
   return { path: file, action };
 }
 

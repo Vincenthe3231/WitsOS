@@ -92,7 +92,7 @@ class HermesTarget implements AgentTarget {
       'platform_toolsets:',
       '  cli:',
       '    - hermes-cli',
-      '    - mcp-WitsOS',
+      '    - mcp-witsos',
       '',
     ].join('\n');
   }
@@ -251,8 +251,8 @@ function escapeRegExp(value: string): string {
 
 function renderWitsOSMcpChild(): string[] {
   return [
-    '  WitsOS:',
-    '    command: WitsOS',
+    '  witsos:',
+    '    command: witsos',
     '    args:',
     '      - serve',
     '      - --mcp',
@@ -269,13 +269,23 @@ function renderWitsOSMcpBlock(): string[] {
 function hasWitsOSMcpServer(content: string): boolean {
   const lines = splitLines(content);
   const parent = topLevelRange(lines, 'mcp_servers');
-  return !!parent && !!childRange(lines, parent, 'WitsOS');
+  return !!parent && (!!childRange(lines, parent, 'witsos') || !!childRange(lines, parent, 'WitsOS'));
 }
 
 function upsertWitsOSMcpServer(content: string): string {
-  const lines = splitLines(content);
-  const parent = topLevelRange(lines, 'mcp_servers');
-  const child = parent ? childRange(lines, parent, 'WitsOS') : null;
+  let lines = splitLines(content);
+  let parent = topLevelRange(lines, 'mcp_servers');
+
+  // Clean up old capital-WitsOS entry if present (migration on upgrade)
+  if (parent) {
+    const oldChild = childRange(lines, parent, 'WitsOS');
+    if (oldChild) {
+      lines.splice(oldChild.start, oldChild.end - oldChild.start);
+      parent = topLevelRange(lines, 'mcp_servers');
+    }
+  }
+
+  const child = parent ? childRange(lines, parent, 'witsos') : null;
   const replacement = renderWitsOSMcpChild();
 
   if (!parent) {
@@ -297,37 +307,62 @@ function upsertWitsOSMcpServer(content: string): string {
 }
 
 function removeWitsOSMcpServer(content: string): string {
-  const lines = splitLines(content);
-  const parent = topLevelRange(lines, 'mcp_servers');
-  const child = parent ? childRange(lines, parent, 'WitsOS') : null;
-  if (!child) return content;
-  lines.splice(child.start, child.end - child.start);
-  return joinLines(lines);
+  let lines = splitLines(content);
+  let parent = topLevelRange(lines, 'mcp_servers');
+  if (!parent) return content;
+
+  // Remove both lowercase and capital keys
+  let removed = false;
+  const lowercaseChild = childRange(lines, parent, 'witsos');
+  if (lowercaseChild) {
+    lines.splice(lowercaseChild.start, lowercaseChild.end - lowercaseChild.start);
+    removed = true;
+    parent = topLevelRange(lines, 'mcp_servers');
+  }
+
+  if (parent) {
+    const capitalChild = childRange(lines, parent, 'WitsOS');
+    if (capitalChild) {
+      lines.splice(capitalChild.start, capitalChild.end - capitalChild.start);
+      removed = true;
+    }
+  }
+
+  return removed ? joinLines(lines) : content;
 }
 
 function upsertWitsOSToolset(content: string): string {
-  const lines = splitLines(content);
-  const parent = topLevelRange(lines, 'platform_toolsets');
-  const cli = parent ? listChildBlock(lines, parent, 'cli') : null;
+  let lines = splitLines(content);
+  let parent = topLevelRange(lines, 'platform_toolsets');
+  let cli = parent ? listChildBlock(lines, parent, 'cli') : null;
+
+  // Clean up old capital-mcp-WitsOS entry if present (migration on upgrade)
+  if (cli) {
+    const oldEntryIdx = lines.findIndex((line, idx) => idx > cli!.start && idx < cli!.end && line.trim() === '- mcp-WitsOS');
+    if (oldEntryIdx !== -1) {
+      lines.splice(oldEntryIdx, 1);
+      cli = listChildBlock(lines, topLevelRange(lines, 'platform_toolsets')!, 'cli');
+    }
+  }
 
   if (!parent) {
     if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
     if (lines.length > 0) lines.push('');
-    lines.push('platform_toolsets:', '  cli:', '    - hermes-cli', '    - mcp-WitsOS');
+    lines.push('platform_toolsets:', '  cli:', '    - hermes-cli', '    - mcp-witsos');
     return joinLines(lines);
   }
 
   if (!cli) {
-    lines.splice(parent.end, 0, '  cli:', '    - hermes-cli', '    - mcp-WitsOS');
+    lines.splice(parent.end, 0, '  cli:', '    - hermes-cli', '    - mcp-witsos');
     return joinLines(lines);
   }
 
   const hasEntry = lines
     .slice(cli.start + 1, cli.end)
-    .some((line) => line.trim() === '- mcp-WitsOS');
+    .some((line) => line.trim() === '- mcp-witsos');
   if (hasEntry) return joinLines(lines);
 
-  lines.splice(cli.end, 0, `${cli.itemIndent}- mcp-WitsOS`);
+  lines.splice(cli.end, 0, `${cli.itemIndent}- mcp-witsos`);
   return joinLines(lines);
 }
 
@@ -337,14 +372,19 @@ function removeWitsOSToolset(content: string): string {
   const cli = parent ? listChildBlock(lines, parent, 'cli') : null;
   if (!cli) return content;
 
-  const hasEntry = lines
+  // Check for both old capital and new lowercase entries
+  const hasLowercaseEntry = lines
+    .slice(cli.start + 1, cli.end)
+    .some((line) => line.trim() === '- mcp-witsos');
+  const hasCapitalEntry = lines
     .slice(cli.start + 1, cli.end)
     .some((line) => line.trim() === '- mcp-WitsOS');
-  if (!hasEntry) return content;
+
+  if (!hasLowercaseEntry && !hasCapitalEntry) return content;
 
   const next = lines.filter((line, idx) => {
     if (idx <= cli.start || idx >= cli.end) return true;
-    return line.trim() !== '- mcp-WitsOS';
+    return line.trim() !== '- mcp-witsos' && line.trim() !== '- mcp-WitsOS';
   });
   return joinLines(next);
 }

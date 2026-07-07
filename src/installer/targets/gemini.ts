@@ -74,7 +74,7 @@ class GeminiTarget implements AgentTarget {
   detect(loc: Location): DetectionResult {
     const file = settingsJsonPath(loc);
     const config = readJsonFile(file);
-    const alreadyConfigured = !!config.mcpServers?.WitsOS;
+    const alreadyConfigured = !!config.mcpServers?.witsos || !!config.mcpServers?.WitsOS;
     const installed = loc === 'global'
       ? fs.existsSync(configDir('global')) || fs.existsSync(file)
       : fs.existsSync(file) || fs.existsSync(configDir('local'));
@@ -84,6 +84,10 @@ class GeminiTarget implements AgentTarget {
   install(loc: Location, _opts: InstallOptions): WriteResult {
     const files: WriteResult['files'] = [];
     files.push(writeMcpEntry(loc));
+
+    // Clean up old capital-WitsOS entries (pre-casing-fix installs).
+    const capitalCleanup = cleanupLegacyCapitalWitsOS(loc);
+    if (capitalCleanup.action === 'removed') files.push(capitalCleanup);
 
     // GEMINI.md gets the short marker-fenced WitsOS block (#704):
     // subagents and non-MCP harnesses read GEMINI.md but never the MCP
@@ -98,8 +102,16 @@ class GeminiTarget implements AgentTarget {
 
     const file = settingsJsonPath(loc);
     const config = readJsonFile(file);
+    let removed = false;
+    if (config.mcpServers?.witsos) {
+      delete config.mcpServers.witsos;
+      removed = true;
+    }
     if (config.mcpServers?.WitsOS) {
       delete config.mcpServers.WitsOS;
+      removed = true;
+    }
+    if (removed) {
       if (Object.keys(config.mcpServers).length === 0) {
         delete config.mcpServers;
       }
@@ -119,7 +131,7 @@ class GeminiTarget implements AgentTarget {
 
   printConfig(loc: Location): string {
     const target = settingsJsonPath(loc);
-    const snippet = JSON.stringify({ mcpServers: { WitsOS: getMcpServerConfig() } }, null, 2);
+    const snippet = JSON.stringify({ mcpServers: { witsos: getMcpServerConfig() } }, null, 2);
     return `# Add to ${target}\n\n${snippet}\n`;
   }
 
@@ -134,7 +146,7 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   const existing = readJsonFile(file);
-  const before = existing.mcpServers?.WitsOS;
+  const before = existing.mcpServers?.witsos;
   const after = getMcpServerConfig();
 
   if (jsonDeepEqual(before, after)) {
@@ -143,19 +155,53 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   const action: 'created' | 'updated' =
     before ? 'updated' : (fs.existsSync(file) ? 'updated' : 'created');
   if (!existing.mcpServers) existing.mcpServers = {};
-  existing.mcpServers.WitsOS = after;
+  existing.mcpServers.witsos = after;
+  // Clean up old capital-WitsOS entry if present (migration on upgrade)
+  if (existing.mcpServers.WitsOS) {
+    delete existing.mcpServers.WitsOS;
+  }
   writeJsonFile(file, existing);
   return { path: file, action };
 }
 
 /**
+ * Remove capital-WitsOS MCP entry from settings.json (if present) when
+ * migrating from pre-casing-fix installs. This cleans up the stale entry
+ * so users don't end up with both WitsOS and witsos after upgrading.
+ */
+function cleanupLegacyCapitalWitsOS(loc: Location): WriteResult['files'][number] {
+  const file = settingsJsonPath(loc);
+  const config = readJsonFile(file);
+  if (!config.mcpServers?.WitsOS) {
+    return { path: file, action: 'unchanged' };
+  }
+  delete config.mcpServers.WitsOS;
+  if (Object.keys(config.mcpServers).length === 0) {
+    delete config.mcpServers;
+  }
+  writeJsonFile(file, config);
+  return { path: file, action: 'removed' };
+}
+
+/**
  * Strip the marker-delimited WitsOS block from GEMINI.md if a prior
  * install wrote one. Used by both install (self-heal on upgrade) and
- * uninstall — see issue #529.
+ * uninstall — see issue #529. Also handles legacy markers from pre-casing-fix
+ * installs.
  */
 function removeInstructionsEntry(loc: Location): WriteResult['files'][number] {
   const file = instructionsPath(loc);
-  const action = removeMarkedSection(file, WitsOS_SECTION_START, WitsOS_SECTION_END);
+  const legacyStart = '<!-- WITSOS_START -->';
+  const legacyEnd = '<!-- WITSOS_END -->';
+
+  // Try removing with current markers first
+  let action = removeMarkedSection(file, WitsOS_SECTION_START, WitsOS_SECTION_END);
+
+  // If not found, try legacy markers
+  if (action === 'not-found' && fs.existsSync(file)) {
+    action = removeMarkedSection(file, legacyStart, legacyEnd);
+  }
+
   return { path: file, action };
 }
 

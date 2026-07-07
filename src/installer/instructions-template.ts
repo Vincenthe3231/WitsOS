@@ -42,10 +42,10 @@ export const WitsOS_SECTION_END = '<!-- WitsOS_END -->';
 export const WitsOS_INSTRUCTIONS_BLOCK = `${WitsOS_SECTION_START}
 ## WitsOS
 
-In repositories indexed by WitsOS (a \`.WitsOS/\` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+In repositories indexed by WitsOS (a \`.witsos/\` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
 
-- **MCP tool** (when available): \`WitsOS_explore\` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
-- **Shell** (always works): \`WitsOS explore "<symbol names or question>"\` prints the same output.
+- **MCP tool** (when available): \`witsos_explore\` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
+- **Shell** (always works): \`witsos explore "<symbol names or question>"\` prints the same output.
 
-If there is no \`.WitsOS/\` directory, skip WitsOS entirely — indexing is the user's decision.
+If there is no \`.witsos/\` directory, skip WitsOS entirely — indexing is the user's decision.
 ${WitsOS_SECTION_END}`;

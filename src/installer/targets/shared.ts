@@ -24,7 +24,7 @@ import {
 export function getMcpServerConfig(): { type: string; command: string; args: string[] } {
   return {
     type: 'stdio',
-    command: 'WitsOS',
+    command: 'witsos',
     args: ['serve', '--mcp'],
   };
 }
@@ -34,18 +34,27 @@ export function getMcpServerConfig(): { type: string; command: string; args: str
  * have a permissions concept can compose this list directly.
  *
  * One server-scoped wildcard rather than a per-tool list. By default only
- * `WitsOS_explore` is even LISTED to the agent (see DEFAULT_MCP_TOOLS in
+ * `witsos_explore` is even LISTED to the agent (see DEFAULT_MCP_TOOLS in
  * mcp/tools.ts), so in practice explore is the only tool this auto-approves —
  * but the wildcard means that if a user re-enables another tool via
- * WitsOS_MCP_TOOLS, it's already pre-approved (no permission prompt, no
+ * WITSOS_MCP_TOOLS, it's already pre-approved (no permission prompt, no
  * hand-editing settings.json), and future tools are covered too. Claude only
  * honors globs after a literal `mcp__<server>__` prefix, so this exact string
- * is the way to allow-all for one server; a bare `mcp__WitsOS` or `*` is
+ * is the way to allow-all for one server; a bare `mcp__witsos` or `*` is
  * ignored. The allowlist gates PROMPTING, not visibility, so a superset here
  * never makes a hidden tool appear.
  */
 export function getWitsOSPermissions(): string[] {
-  return ['mcp__WitsOS__*'];
+  return ['mcp__witsos__*'];
+}
+
+/**
+ * Remove stale capital-`WitsOS` permission entries (from older installs)
+ * when migrating to lowercase `witsos`. Returns the permission entry that
+ * should be removed, or null if not found.
+ */
+export function getStaleWitsOSPermissionPrefix(): string {
+  return 'mcp__WitsOS__';
 }
 
 /**
@@ -182,8 +191,22 @@ export function replaceOrAppendMarkedSection(
  * install stays idempotent. See `instructions-template.ts` for why this
  * block exists (#704: subagents + non-MCP harnesses never see the MCP
  * initialize instructions).
+ *
+ * Also handles legacy markers (WITSOS_START/WITSOS_END) from pre-casing-fix
+ * installs, replacing them with current markers.
  */
 export function upsertInstructionsEntry(file: string): { path: string; action: 'created' | 'updated' | 'unchanged' } {
+  // First, clean up any old legacy markers if present
+  if (fs.existsSync(file)) {
+    const content = fs.readFileSync(file, 'utf-8');
+    const legacyStart = '<!-- WITSOS_START -->';
+    const legacyEnd = '<!-- WITSOS_END -->';
+    if (content.includes(legacyStart) && content.includes(legacyEnd)) {
+      const action = removeMarkedSection(file, legacyStart, legacyEnd);
+      // Now the file has the legacy block removed, continue with normal upsert
+    }
+  }
+
   const action = replaceOrAppendMarkedSection(
     file,
     WitsOS_INSTRUCTIONS_BLOCK,

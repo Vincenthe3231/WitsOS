@@ -36,7 +36,8 @@ import {
 } from '../instructions-template';
 import { buildTomlTable, removeTomlTable, upsertTomlTable } from './toml';
 
-const TOML_HEADER = 'mcp_servers.WitsOS';
+const TOML_HEADER = 'mcp_servers.witsos';
+const LEGACY_TOML_HEADER = 'mcp_servers.WitsOS';
 
 function configDir(): string {
   return path.join(os.homedir(), '.codex');
@@ -66,7 +67,8 @@ class CodexTarget implements AgentTarget {
     if (fs.existsSync(tomlPath)) {
       try {
         const content = fs.readFileSync(tomlPath, 'utf-8');
-        alreadyConfigured = content.includes(`[${TOML_HEADER}]`);
+        alreadyConfigured = content.includes(`[${TOML_HEADER}]`) ||
+                           content.includes(`[${LEGACY_TOML_HEADER}]`);
       } catch { /* ignore */ }
     }
     const installed = fs.existsSync(configDir());
@@ -84,6 +86,10 @@ class CodexTarget implements AgentTarget {
 
     files.push(writeMcpEntry());
 
+    // Clean up old capital-WitsOS entries (pre-casing-fix installs).
+    const capitalCleanup = cleanupLegacyCapitalWitsOS();
+    if (capitalCleanup.action === 'removed') files.push(capitalCleanup);
+
     // AGENTS.md gets the short marker-fenced WitsOS block (#704):
     // subagents and non-MCP harnesses read AGENTS.md but never the MCP
     // initialize instructions. Upsert self-heals a stale pre-#529 block.
@@ -98,8 +104,23 @@ class CodexTarget implements AgentTarget {
 
     const tomlPath = tomlConfigPath();
     if (fs.existsSync(tomlPath)) {
-      const content = fs.readFileSync(tomlPath, 'utf-8');
-      const { content: nextContent, action } = removeTomlTable(content, TOML_HEADER);
+      let content = fs.readFileSync(tomlPath, 'utf-8');
+      let nextContent = content;
+      let action: 'removed' | 'not-found' = 'not-found';
+
+      // Remove both new lowercase and legacy capital headers
+      const lowercase = removeTomlTable(content, TOML_HEADER);
+      if (lowercase.action === 'removed') {
+        nextContent = lowercase.content;
+        action = 'removed';
+      }
+
+      const capital = removeTomlTable(nextContent, LEGACY_TOML_HEADER);
+      if (capital.action === 'removed') {
+        nextContent = capital.content;
+        action = 'removed';
+      }
+
       if (action === 'removed') {
         if (nextContent.trim() === '') {
           try { fs.unlinkSync(tomlPath); } catch { /* ignore */ }
@@ -150,8 +171,15 @@ function writeMcpEntry(): WriteResult['files'][number] {
   // Single read — `existing === ''` derives both "is the file empty
   // or absent" and "what was its content," avoiding a TOCTOU window
   // between two `fs.existsSync` calls.
-  const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
+  let existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
   const created = existing.length === 0;
+
+  // Clean up legacy capital-WitsOS header if present (migration on upgrade)
+  const legacyCleanup = removeTomlTable(existing, LEGACY_TOML_HEADER);
+  if (legacyCleanup.action === 'removed') {
+    existing = legacyCleanup.content;
+  }
+
   const { content: nextContent, action } = upsertTomlTable(existing, TOML_HEADER, block);
 
   if (action === 'unchanged') {
@@ -162,13 +190,49 @@ function writeMcpEntry(): WriteResult['files'][number] {
 }
 
 /**
+ * Remove capital-WitsOS TOML header (if present) when migrating from
+ * pre-casing-fix installs. This cleans up the stale entry so users don't
+ * end up with both WitsOS and witsos after upgrading.
+ */
+function cleanupLegacyCapitalWitsOS(): WriteResult['files'][number] {
+  const file = tomlConfigPath();
+  if (!fs.existsSync(file)) {
+    return { path: file, action: 'unchanged' };
+  }
+
+  const content = fs.readFileSync(file, 'utf-8');
+  const { content: nextContent, action } = removeTomlTable(content, LEGACY_TOML_HEADER);
+
+  if (action === 'removed') {
+    if (nextContent.trim() === '') {
+      try { fs.unlinkSync(file); } catch { /* ignore */ }
+    } else {
+      atomicWriteFileSync(file, nextContent.trimEnd() + '\n');
+    }
+  }
+
+  return { path: file, action };
+}
+
+/**
  * Strip the marker-delimited WitsOS block from `~/.codex/AGENTS.md`
  * if a prior install wrote one. Used by both install (self-heal on
- * upgrade) and uninstall — see issue #529.
+ * upgrade) and uninstall — see issue #529. Also handles legacy markers
+ * from pre-casing-fix installs.
  */
 function removeInstructionsEntry(): WriteResult['files'][number] {
   const file = instructionsPath();
-  const action = removeMarkedSection(file, WitsOS_SECTION_START, WitsOS_SECTION_END);
+  const legacyStart = '<!-- WITSOS_START -->';
+  const legacyEnd = '<!-- WITSOS_END -->';
+
+  // Try removing with current markers first
+  let action = removeMarkedSection(file, WitsOS_SECTION_START, WitsOS_SECTION_END);
+
+  // If not found, try legacy markers
+  if (action === 'not-found' && fs.existsSync(file)) {
+    action = removeMarkedSection(file, legacyStart, legacyEnd);
+  }
+
   return { path: file, action };
 }
 

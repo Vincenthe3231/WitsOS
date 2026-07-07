@@ -83,7 +83,7 @@ class ClaudeCodeTarget implements AgentTarget {
   detect(loc: Location): DetectionResult {
     const mcpPath = mcpJsonPath(loc);
     const config = readJsonFile(mcpPath);
-    const alreadyConfigured = !!config.mcpServers?.WitsOS;
+    const alreadyConfigured = !!config.mcpServers?.witsos || !!config.mcpServers?.WitsOS;
     // For "installed" we infer from the existence of either the dir
     // (global) or the project marker file (local). Cheap and avoids
     // shelling out to `claude --version`.
@@ -106,6 +106,11 @@ class ClaudeCodeTarget implements AgentTarget {
       const migrated = cleanupLegacyLocalMcp();
       if (migrated) files.push(migrated);
     }
+
+    // 1c. Clean up old capital-WitsOS entries (pre-casing-fix installs).
+    const capitalCleanup = cleanupLegacyCapitalWitsOS(loc);
+    if (capitalCleanup.action === 'removed') files.push(capitalCleanup);
+
 
     // 2. Permissions (only when autoAllow)
     if (opts.autoAllow) {
@@ -146,11 +151,19 @@ class ClaudeCodeTarget implements AgentTarget {
   uninstall(loc: Location): WriteResult {
     const files: WriteResult['files'] = [];
 
-    // 1. MCP server entry
+    // 1. MCP server entry (both lowercase witsos and legacy capital WitsOS)
     const mcpPath = mcpJsonPath(loc);
     const config = readJsonFile(mcpPath);
+    let removed = false;
+    if (config.mcpServers?.witsos) {
+      delete config.mcpServers.witsos;
+      removed = true;
+    }
     if (config.mcpServers?.WitsOS) {
       delete config.mcpServers.WitsOS;
+      removed = true;
+    }
+    if (removed) {
       if (Object.keys(config.mcpServers).length === 0) {
         delete config.mcpServers;
       }
@@ -167,13 +180,13 @@ class ClaudeCodeTarget implements AgentTarget {
       if (migrated) files.push(migrated);
     }
 
-    // 2. Permissions
+    // 2. Permissions (both lowercase and legacy capital)
     const settingsPath = settingsJsonPath(loc);
     const settings = readJsonFile(settingsPath);
     if (Array.isArray(settings.permissions?.allow)) {
       const before = settings.permissions.allow.length;
       settings.permissions.allow = settings.permissions.allow.filter(
-        (p: string) => !p.startsWith('mcp__WitsOS__'),
+        (p: string) => !p.startsWith('mcp__witsos__') && !p.startsWith('mcp__WitsOS__'),
       );
       if (settings.permissions.allow.length !== before) {
         if (settings.permissions.allow.length === 0) {
@@ -211,7 +224,7 @@ class ClaudeCodeTarget implements AgentTarget {
 
   printConfig(loc: Location): string {
     const target = mcpJsonPath(loc);
-    const snippet = JSON.stringify({ mcpServers: { WitsOS: getMcpServerConfig() } }, null, 2);
+    const snippet = JSON.stringify({ mcpServers: { witsos: getMcpServerConfig() } }, null, 2);
     return `# Add to ${target}\n\n${snippet}\n`;
   }
 
@@ -230,7 +243,7 @@ class ClaudeCodeTarget implements AgentTarget {
 export function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   const file = mcpJsonPath(loc);
   const existing = readJsonFile(file);
-  const before = existing.mcpServers?.WitsOS;
+  const before = existing.mcpServers?.witsos;
   const after = getMcpServerConfig();
 
   if (jsonDeepEqual(before, after)) {
@@ -240,13 +253,17 @@ export function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   // 'created' here means: the file itself did not exist before this
   // write. A pre-existing MCP JSON file (`~/.claude.json` globally,
   // `./.mcp.json` locally) containing other MCP servers (no
-  // `WitsOS` key) is 'updated', not 'created' — we're adding an
+  // `witsos` key) is 'updated', not 'created' — we're adding an
   // entry to a file that was already there. Codex uses a different
   // idiom (empty-content => 'created') because its config.toml is
   // ours alone to manage.
   const action: 'created' | 'updated' = before ? 'updated' : (fs.existsSync(file) ? 'updated' : 'created');
   if (!existing.mcpServers) existing.mcpServers = {};
-  existing.mcpServers.WitsOS = after;
+  existing.mcpServers.witsos = after;
+  // Clean up old capital-WitsOS entry if present (migration on upgrade)
+  if (existing.mcpServers.WitsOS) {
+    delete existing.mcpServers.WitsOS;
+  }
   writeJsonFile(file, existing);
   return { path: file, action };
 }
@@ -254,7 +271,7 @@ export function writeMcpEntry(loc: Location): WriteResult['files'][number] {
 /**
  * Strip the WitsOS entry from a legacy project-local
  * `./.claude.json` (written by pre-#207 installers, which Claude Code
- * never read). Surgical: only our `WitsOS` key is removed; sibling
+ * never read). Surgical: only our `witsos` or `WitsOS` keys are removed; sibling
  * MCP servers and any unrelated keys are preserved, and the file is
  * deleted only when removal leaves it completely empty. Returns the
  * file action for reporting, or `null` when there's nothing to migrate.
@@ -263,8 +280,16 @@ function cleanupLegacyLocalMcp(): WriteResult['files'][number] | null {
   const file = legacyLocalMcpPath();
   if (!fs.existsSync(file)) return null;
   const config = readJsonFile(file);
-  if (!config.mcpServers?.WitsOS) return null;
-  delete config.mcpServers.WitsOS;
+  let removed = false;
+  if (config.mcpServers?.witsos) {
+    delete config.mcpServers.witsos;
+    removed = true;
+  }
+  if (config.mcpServers?.WitsOS) {
+    delete config.mcpServers.WitsOS;
+    removed = true;
+  }
+  if (!removed) return null;
   if (Object.keys(config.mcpServers).length === 0) delete config.mcpServers;
   if (Object.keys(config).length === 0) {
     try { fs.unlinkSync(file); } catch { /* ignore */ }
@@ -272,6 +297,58 @@ function cleanupLegacyLocalMcp(): WriteResult['files'][number] | null {
     writeJsonFile(file, config);
   }
   return { path: file, action: 'removed' };
+}
+
+/**
+ * Remove capital-WitsOS MCP entry from ~/.claude.json (if present) when
+ * migrating from pre-casing-fix installs. This cleans up the stale entry
+ * so users don't end up with both WitsOS and witsos after upgrading.
+ * Also strips stale mcp__WitsOS__* permissions. Returns the result for
+ * reporting, or `unchanged` when nothing was found.
+ */
+function cleanupLegacyCapitalWitsOS(loc: Location): WriteResult['files'][number] {
+  const mcpPath = mcpJsonPath(loc);
+  const config = readJsonFile(mcpPath);
+  let removed = false;
+
+  if (config.mcpServers?.WitsOS) {
+    delete config.mcpServers.WitsOS;
+    removed = true;
+  }
+
+  if (removed) {
+    if (Object.keys(config.mcpServers).length === 0) {
+      delete config.mcpServers;
+    }
+    writeJsonFile(mcpPath, config);
+  }
+
+  // Also clean stale permissions with capital prefix
+  const settingsPath = settingsJsonPath(loc);
+  if (fs.existsSync(settingsPath)) {
+    const settings = readJsonFile(settingsPath);
+    if (Array.isArray(settings.permissions?.allow)) {
+      const before = settings.permissions.allow.length;
+      settings.permissions.allow = settings.permissions.allow.filter(
+        (p: string) => !p.startsWith('mcp__WitsOS__'),
+      );
+      if (settings.permissions.allow.length !== before) {
+        removed = true;
+        if (settings.permissions.allow.length === 0) {
+          delete settings.permissions.allow;
+        }
+        if (Object.keys(settings.permissions).length === 0) {
+          delete settings.permissions;
+        }
+        writeJsonFile(settingsPath, settings);
+      }
+    }
+  }
+
+  return {
+    path: mcpPath,
+    action: removed ? 'removed' : 'unchanged',
+  };
 }
 
 /**
@@ -284,24 +361,31 @@ function cleanupLegacyLocalMcp(): WriteResult['files'][number] | null {
  * removed from the CLI, so the Stop hook fails every turn with
  * "unknown command 'sync-if-dirty'". Matching on the WitsOS-scoped
  * subcommand keeps unrelated user hooks (e.g. GitKraken's
- * `gk ai hook run`) untouched.
+ * `gk ai hook run`) untouched. After the casing fix, hooks may also
+ * appear with lowercase binary name `witsos mark-dirty`.
  */
 function isLegacyWitsOSHookCommand(command: unknown): boolean {
   if (typeof command !== 'string') return false;
   return (
     command.includes('WitsOS mark-dirty') ||
-    command.includes('WitsOS sync-if-dirty')
+    command.includes('WitsOS sync-if-dirty') ||
+    command.includes('witsos mark-dirty') ||
+    command.includes('witsos sync-if-dirty')
   );
 }
 
 /**
  * The front-load prompt-hook command the installer writes into Claude's
  * `UserPromptSubmit` (see writePromptHookEntry). Matched by substring so an
- * `npx @colbymchenry/WitsOS prompt-hook` form is recognized too.
+ * `npx @colbymchenry/witsos prompt-hook` form is recognized too. Also handles
+ * the old capital form `WitsOS prompt-hook` for backwards compatibility.
  */
-const PROMPT_HOOK_COMMAND = 'WitsOS prompt-hook';
+const PROMPT_HOOK_COMMAND = 'witsos prompt-hook';
 function isPromptHookCommand(command: unknown): boolean {
-  return typeof command === 'string' && command.includes(PROMPT_HOOK_COMMAND);
+  return typeof command === 'string' && (
+    command.includes(PROMPT_HOOK_COMMAND) ||
+    command.includes('WitsOS prompt-hook')
+  );
 }
 
 /**
@@ -390,6 +474,11 @@ export function writePermissionsEntry(loc: Location): WriteResult['files'][numbe
 
   if (!settings.permissions) settings.permissions = {};
   if (!Array.isArray(settings.permissions.allow)) settings.permissions.allow = [];
+
+  // Clean up stale capital-WitsOS permissions from pre-fix installs
+  settings.permissions.allow = settings.permissions.allow.filter(
+    (p: string) => !p.startsWith('mcp__WitsOS__'),
+  );
 
   const want = getWitsOSPermissions();
   const before = [...settings.permissions.allow];
