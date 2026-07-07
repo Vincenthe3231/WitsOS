@@ -80,7 +80,7 @@ const MAX_PATH_LENGTH = 4_096;
 const RUST_PATH_PREFIXES = new Set(['crate', 'super', 'self']);
 
 /**
- * Node kinds that contain other symbols. For these, `WitsOS_node` with
+ * Node kinds that contain other symbols. For these, `witsos_node` with
  * `includeCode=true` returns a structural outline (member names + signatures
  * + line numbers) instead of the full body, which for a large class is a
  * multi-thousand-character wall of source that bloats the agent's context.
@@ -96,7 +96,7 @@ function lastQualifierPart(symbol: string): string {
 }
 
 /**
- * Calculate the recommended number of WitsOS_explore calls based on project size.
+ * Calculate the recommended number of witsos_explore calls based on project size.
  * Larger codebases need more exploration calls to cover their surface area,
  * but smaller ones should use fewer to avoid unnecessary overhead.
  */
@@ -109,7 +109,7 @@ export function getExploreBudget(fileCount: number): number {
 }
 
 /**
- * Adaptive output budget for `WitsOS_explore`, scaled to project size.
+ * Adaptive output budget for `witsos_explore`, scaled to project size.
  *
  * Smaller codebases get a tighter total cap, fewer default files, smaller
  * per-file cap, and tighter clustering — so a focused query on a 100-file
@@ -259,7 +259,7 @@ export function getExploreOutputBudget(fileCount: number): ExploreOutputBudget {
 }
 
 /**
- * Whether `WitsOS_explore` should prefix source lines with their line
+ * Whether `witsos_explore` should prefix source lines with their line
  * numbers (cat -n style: `<num>\t<code>`).
  *
  * Line numbers let the agent cite `file:line` straight from the explore
@@ -274,7 +274,7 @@ function exploreLineNumbersEnabled(): boolean {
 }
 
 /**
- * Adaptive explore sizing (default ON). `WitsOS_explore` skeletonizes OFF-SPINE
+ * Adaptive explore sizing (default ON). `witsos_explore` skeletonizes OFF-SPINE
  * polymorphic-sibling files — a file whose class is one of ≥3 interchangeable
  * implementations of a shared interface (e.g. OkHttp's `: Interceptor` classes) —
  * to class + member signatures (bodies elided), keeping the on-spine exemplar full.
@@ -328,7 +328,7 @@ function numberSourceLines(slice: string, firstLineNumber: number): string {
 }
 
 /**
- * Unique line-prefix for a per-file source section in WitsOS_explore output.
+ * Unique line-prefix for a per-file source section in witsos_explore output.
  * Issue #778: tool results dropped ATX headings (`####`, `##`, `###`) for bold
  * labels so Markdown-rendering MCP clients (e.g. the Claude Code VSCode
  * extension) stop blowing every header up to H1–H4. The path is bold + a code
@@ -445,7 +445,7 @@ const projectPathProperty: PropertySchema = {
 /**
  * All WitsOS MCP tools
  *
- * Designed for minimal context usage - use WitsOS_explore as the primary tool
+ * Designed for minimal context usage - use witsos_explore as the primary tool
  * (one call usually answers the whole question), and only use other tools for
  * targeted follow-up queries.
  *
@@ -453,8 +453,8 @@ const projectPathProperty: PropertySchema = {
  */
 export const tools: ToolDefinition[] = [
   {
-    name: 'WitsOS_search',
-    description: 'Quick symbol search by name. Returns locations only (no code). Use WitsOS_explore instead to get the actual source / understand an area in one call.',
+    name: 'witsos_search',
+    description: 'Quick symbol search by name. Returns locations only (no code). Use witsos_explore instead to get the actual source / understand an area in one call.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -478,8 +478,8 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'WitsOS_callers',
-    description: 'List functions that call <symbol>. For the full flow, use WitsOS_explore.',
+    name: 'witsos_callers',
+    description: 'List functions that call <symbol>. For the full flow, use witsos_explore.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -502,8 +502,8 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'WitsOS_callees',
-    description: 'List functions that <symbol> calls. For the full flow, use WitsOS_explore.',
+    name: 'witsos_callees',
+    description: 'List functions that <symbol> calls. For the full flow, use witsos_explore.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -526,7 +526,7 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'WitsOS_impact',
+    name: 'witsos_impact',
     description: 'List symbols affected by changing <symbol>. Use before a refactor.',
     inputSchema: {
       type: 'object',
@@ -550,8 +550,8 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'WitsOS_node',
-    description: 'Two modes. (1) READ A FILE — use INSTEAD of the Read tool: pass `file` (a path or basename) with no `symbol` and it returns that file\'s current on-disk source with line numbers, exactly the shape Read gives you (`<n>\\t<line>`, safe to Edit from), narrowable with `offset`/`limit` just like Read — PLUS a one-line note of which files depend on it. Same bytes as Read, faster (served from the index), with the blast radius attached. Use it whenever you would Read a source file. (2) ONE SYMBOL you can name — its location, signature, verbatim source (includeCode=true) and caller/callee trail in one call, so before changing it you see what calls it and what your edit would break. For an AMBIGUOUS name it returns EVERY matching definition\'s body in one call (so you never Read a file to find the right overload); pass `file`/`line` to pin one. Use WitsOS_explore for several related symbols or the full flow.',
+    name: 'witsos_node',
+    description: 'Two modes. (1) READ A FILE — use INSTEAD of the Read tool: pass `file` (a path or basename) with no `symbol` and it returns that file\'s current on-disk source with line numbers, exactly the shape Read gives you (`<n>\\t<line>`, safe to Edit from), narrowable with `offset`/`limit` just like Read — PLUS a one-line note of which files depend on it. Same bytes as Read, faster (served from the index), with the blast radius attached. Use it whenever you would Read a source file. (2) ONE SYMBOL you can name — its location, signature, verbatim source (includeCode=true) and caller/callee trail in one call, so before changing it you see what calls it and what your edit would break. For an AMBIGUOUS name it returns EVERY matching definition\'s body in one call (so you never Read a file to find the right overload); pass `file`/`line` to pin one. Use witsos_explore for several related symbols or the full flow.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -591,14 +591,14 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'WitsOS_explore',
+    name: 'witsos_explore',
     description: 'PRIMARY TOOL — call FIRST for almost any question OR before an edit: how does X work, architecture, a bug, where/what is X, surveying an area, or the symbols you are about to change. Returns the verbatim source of the relevant symbols grouped by file in ONE capped call (Read-equivalent — treat the shown source as already Read; do NOT re-open those files), plus the call path among them. Query can be a natural-language question OR a bag of symbol/file names. Usually the ONLY call you need — more accurate context, in far fewer tokens and round-trips than a search/Read/Grep loop.',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Symbol names, file names, or short code terms to explore (e.g., "AuthService loginUser session-manager", "GraphTraverser BFS impact traversal.ts"). For a flow question, name the symbols spanning the flow (e.g. "mutateElement renderScene"). A natural-language question works too — no prior WitsOS_search needed.',
+          description: 'Symbol names, file names, or short code terms to explore (e.g., "AuthService loginUser session-manager", "GraphTraverser BFS impact traversal.ts"). For a flow question, name the symbols spanning the flow (e.g. "mutateElement renderScene"). A natural-language question works too — no prior witsos_search needed.',
         },
         maxFiles: {
           type: 'number',
@@ -611,7 +611,7 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'WitsOS_status',
+    name: 'witsos_status',
     description: 'Index health check (files / nodes / edges). Skip unless debugging.',
     inputSchema: {
       type: 'object',
@@ -621,7 +621,7 @@ export const tools: ToolDefinition[] = [
     },
   },
   {
-    name: 'WitsOS_files',
+    name: 'witsos_files',
     description: 'Indexed file tree with language + symbol counts. Faster than Glob for project layout.',
     inputSchema: {
       type: 'object',
@@ -694,14 +694,14 @@ function withRequiredProjectPath(defs: ToolDefinition[]): ToolDefinition[] {
 export function getStaticTools(): ToolDefinition[] {
   const raw = process.env.WitsOS_MCP_TOOLS;
   if (!raw || !raw.trim()) {
-    return tools.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^WitsOS_/, '')));
+    return tools.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^WitsOS_/i, '')));
   }
-  const allow = new Set(raw.split(',').map(s => s.trim().replace(/^WitsOS_/, '')).filter(Boolean));
-  return allow.size ? tools.filter(t => allow.has(t.name.replace(/^WitsOS_/, ''))) : tools;
+  const allow = new Set(raw.split(',').map(s => s.trim().replace(/^WitsOS_/i, '')).filter(Boolean));
+  return allow.size ? tools.filter(t => allow.has(t.name.replace(/^WitsOS_/i, ''))) : tools;
 }
 
 /**
- * The MCP tools served by DEFAULT (short names). Pared to ONLY `WitsOS_explore`
+ * The MCP tools served by DEFAULT (short names). Pared to ONLY `witsos_explore`
  * — the single tool that reliably earns its place: one capped call returns the
  * verbatim source of the relevant symbols grouped by file. Every other tool is a
  * narrower slice of what explore already does, and presence itself steers
@@ -835,12 +835,12 @@ export class ToolHandler {
    * Unset/empty → every tool is exposed. Lets an operator (or an A/B harness)
    * trim the tool surface without rebuilding the client config; the ablated
    * tool is then truly absent from ListTools rather than merely denied on call.
-   * Matching is on the short form, so "node" and "WitsOS_node" both work.
+   * Matching is on the short form, so "node" and "witsos_node" both work.
    */
   private toolAllowlist(): Set<string> | null {
     const raw = process.env.WitsOS_MCP_TOOLS;
     if (!raw || !raw.trim()) return null;
-    const short = (s: string) => s.trim().replace(/^WitsOS_/, '');
+    const short = (s: string) => s.trim().replace(/^WitsOS_/i, '');
     const set = new Set(raw.split(',').map(short).filter(Boolean));
     return set.size ? set : null;
   }
@@ -848,12 +848,12 @@ export class ToolHandler {
   /** Whether a tool name passes the WitsOS_MCP_TOOLS allowlist (if any). */
   private isToolAllowed(name: string): boolean {
     const allow = this.toolAllowlist();
-    return !allow || allow.has(name.replace(/^WitsOS_/, ''));
+    return !allow || allow.has(name.replace(/^WitsOS_/i, ''));
   }
 
   /**
    * Get tool definitions with dynamic descriptions based on project size.
-   * The WitsOS_explore tool description includes a budget recommendation
+   * The witsos_explore tool description includes a budget recommendation
    * scaled to the number of indexed files. Honors the WitsOS_MCP_TOOLS
    * allowlist so a trimmed surface is reflected in ListTools.
    */
@@ -863,8 +863,8 @@ export class ToolHandler {
     // DEFAULT_MCP_TOOLS for the evidence). An allowlist replaces the
     // default entirely, so any defined tool can be re-enabled.
     let visible = allow
-      ? tools.filter(t => allow.has(t.name.replace(/^WitsOS_/, '')))
-      : tools.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^WitsOS_/, '')));
+      ? tools.filter(t => allow.has(t.name.replace(/^WitsOS_/i, '')))
+      : tools.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^WitsOS_/i, '')));
     // No default project loaded → no-root-index case (#993): a gateway server
     // started outside any repo, or a monorepo root whose indexes live in
     // sub-projects. With nothing to fall back to, EVERY call needs an explicit
@@ -890,7 +890,7 @@ export class ToolHandler {
       // n=2 audits ruled out cutting below 5 tools:
       // - 3-tool gate (search + context + trace): cost regressed on
       //   cobra/ky/sinatra. The agent fell back to raw Reads to cover
-      //   what WitsOS_node + WitsOS_explore would have answered.
+      //   what witsos_node + witsos_explore would have answered.
       // - 1-tool gate (search only): catastrophic regression — express
       //   went from -43% WIN to +107% LOSS. With only search, the agent
       //   can't navigate the call graph structurally and reads everything.
@@ -906,16 +906,16 @@ export class ToolHandler {
       // so it deserves the same gating.
       const TINY_REPO_FILE_THRESHOLD = 500;
       const TINY_REPO_CORE_TOOLS = new Set([
-        'WitsOS_explore',
-        'WitsOS_search',
-        'WitsOS_node',
+        'witsos_explore',
+        'witsos_search',
+        'witsos_node',
       ]);
       if (stats.fileCount < TINY_REPO_FILE_THRESHOLD) {
         visible = visible.filter(t => TINY_REPO_CORE_TOOLS.has(t.name));
       }
 
       return visible.map(tool => {
-        if (tool.name === 'WitsOS_explore') {
+        if (tool.name === 'witsos_explore') {
           return {
             ...tool,
             description: `${tool.description} Budget: make at most ${budget} calls for this project (${stats.fileCount.toLocaleString()} files indexed).`,
@@ -1138,7 +1138,7 @@ export class ToolHandler {
    * notice when the resolved index belongs to a different git working tree than
    * the caller's (issue #155). Without this, an agent in a nested worktree
    * silently trusts main-branch results. No-op on error results and when there
-   * is no mismatch. `WitsOS_status` is excluded — it embeds its own verbose
+   * is no mismatch. `witsos_status` is excluded — it embeds its own verbose
    * warning — so it stays out of this path.
    */
   private withWorktreeNotice(result: ToolResult, projectPath?: string): ToolResult {
@@ -1289,7 +1289,7 @@ export class ToolHandler {
       if (typeof pathCheck === 'object' && pathCheck !== undefined) {
         return pathCheck;
       }
-      // The `path` and `pattern` properties used by WitsOS_files are
+      // The `path` and `pattern` properties used by witsos_files are
       // also path-shaped — apply the same cap.
       if (args.path !== undefined) {
         const check = this.validateOptionalPath(args.path, 'path');
@@ -1300,12 +1300,12 @@ export class ToolHandler {
         if (typeof check === 'object' && check !== undefined) return check;
       }
 
-      // WitsOS_status reports watcher state (pending files, degraded mode,
+      // witsos_status reports watcher state (pending files, degraded mode,
       // worktree warning) and embeds its own sections — it must run on the MAIN
       // thread against the watched default instance, so it is NEVER off-loaded to
       // a worker (whose read connection has no watcher). It also skips the
       // auto-banner wrapper to avoid duplicating its own pending-files section.
-      if (toolName === 'WitsOS_status') {
+      if (toolName === 'witsos_status') {
         return await this.handleStatus(args);
       }
 
@@ -1375,25 +1375,25 @@ export class ToolHandler {
 
   /**
    * Pure dispatch over the read tools — the switch, with no gate, no notices, no
-   * allowlist/validation (the caller owns those). `WitsOS_status` is handled
+   * allowlist/validation (the caller owns those). `witsos_status` is handled
    * on the main thread in {@link execute} and never reaches here. May throw
    * NotIndexed/PathRefusal, which {@link executeReadTool} classifies.
    */
   private async dispatchTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
     switch (toolName) {
-      case 'WitsOS_search': return await this.handleSearch(args);
-      case 'WitsOS_callers': return await this.handleCallers(args);
-      case 'WitsOS_callees': return await this.handleCallees(args);
-      case 'WitsOS_impact': return await this.handleImpact(args);
-      case 'WitsOS_explore': return await this.handleExplore(args);
-      case 'WitsOS_node': return await this.handleNode(args);
-      case 'WitsOS_files': return await this.handleFiles(args);
+      case 'witsos_search': return await this.handleSearch(args);
+      case 'witsos_callers': return await this.handleCallers(args);
+      case 'witsos_callees': return await this.handleCallees(args);
+      case 'witsos_impact': return await this.handleImpact(args);
+      case 'witsos_explore': return await this.handleExplore(args);
+      case 'witsos_node': return await this.handleNode(args);
+      case 'witsos_files': return await this.handleFiles(args);
       default: return this.errorResult(`Unknown tool: ${toolName}`);
     }
   }
 
   /**
-   * Handle WitsOS_search
+   * Handle witsos_search
    */
   private async handleSearch(args: Record<string, unknown>): Promise<ToolResult> {
     const query = this.validateString(args.query, 'query');
@@ -1480,7 +1480,7 @@ export class ToolHandler {
   }
 
   /**
-   * Handle WitsOS_callers
+   * Handle witsos_callers
    */
   private async handleCallers(args: Record<string, unknown>): Promise<ToolResult> {
     const symbol = this.validateString(args.symbol, 'symbol');
@@ -1553,7 +1553,7 @@ export class ToolHandler {
   }
 
   /**
-   * Handle WitsOS_callees
+   * Handle witsos_callees
    */
   private async handleCallees(args: Record<string, unknown>): Promise<ToolResult> {
     const symbol = this.validateString(args.symbol, 'symbol');
@@ -1623,7 +1623,7 @@ export class ToolHandler {
   }
 
   /**
-   * Handle WitsOS_impact
+   * Handle witsos_impact
    */
   private async handleImpact(args: Record<string, unknown>): Promise<ToolResult> {
     const symbol = this.validateString(args.symbol, 'symbol');
@@ -1787,7 +1787,7 @@ export class ToolHandler {
   }
 
   /**
-   * Flow-from-named-symbols: an agent's WitsOS_explore query is a bag of
+   * Flow-from-named-symbols: an agent's witsos_explore query is a bag of
    * symbol names that usually spans the flow it's investigating (e.g.
    * "PmsProductController getList PmsProductService list PmsProductServiceImpl").
    * Surface the longest call chain AMONG those named symbols — scoped to what the
@@ -2112,7 +2112,7 @@ export class ToolHandler {
       '',
       ...notes,
       '',
-      '> These sites choose their call target at runtime (registry / bus / reflection) — the site shown IS where the flow continues. To follow it, run WitsOS_explore or WitsOS_node on a candidate; source for the sites above is included below.',
+      '> These sites choose their call target at runtime (registry / bus / reflection) — the site shown IS where the flow continues. To follow it, run witsos_explore or witsos_node on a candidate; source for the sites above is included below.',
       '',
     ].join('\n');
   }
@@ -2127,7 +2127,7 @@ export class ToolHandler {
    * the concrete target is chosen at runtime from N implementations, so no single
    * static edge is "the answer" — the implementations ARE the continuations. We
    * announce the supertype, its TRUE implementer count, and a few concrete targets,
-   * then steer to WitsOS_explore. Graph-only, query-time, zero mutation; the
+   * then steer to witsos_explore. Graph-only, query-time, zero mutation; the
    * caller fires it ONLY for an UNCOVERED named token, so a connected flow is silent.
    *
    * Robust to FTS sampling bias: the same-name family is a capped FTS sample that
@@ -2199,7 +2199,7 @@ export class ToolHandler {
       '',
       ...notes,
       '',
-      '> The method above is dispatched at runtime to one of the listed implementations (a registry / plugin / strategy interface) — there is no single static caller→callee edge; the implementations ARE the continuations. To follow one, run WitsOS_explore on a listed target.',
+      '> The method above is dispatched at runtime to one of the listed implementations (a registry / plugin / strategy interface) — there is no single static caller→callee edge; the implementations ARE the continuations. To follow one, run witsos_explore on a listed target.',
       '',
     ].join('\n');
   }
@@ -2403,11 +2403,11 @@ export class ToolHandler {
   }
 
   /**
-   * Handle WitsOS_explore — deep exploration in a single call
+   * Handle witsos_explore — deep exploration in a single call
    *
    * Strategy: find relevant symbols via graph traversal, group by file,
    * then read contiguous file sections covering all symbols per file.
-   * This replaces multiple WitsOS_node + Read calls.
+   * This replaces multiple witsos_node + Read calls.
    *
    * Output size is adaptive to project file count via
    * `getExploreOutputBudget` — see #185 for why a fixed 35k cap was a
@@ -2520,7 +2520,7 @@ export class ToolHandler {
         // 50+-overload name (tokio `poll`) ranks the wanted def (`Harness::poll`)
         // below the FTS cut, so findAllSymbols would never see it and the
         // type-token bias below couldn't pick the harness.rs one. (Same fix as
-        // WitsOS_node's findSymbolMatches.) Qualified tokens keep findAllSymbols.
+        // witsos_node's findSymbolMatches.) Qualified tokens keep findAllSymbols.
         const isQual = /[.\/]|::/.test(t);
         const raw = isQual ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t);
         const cands = raw
@@ -2531,7 +2531,7 @@ export class ToolHandler {
         // only: the overloads whose file/class the query ALSO names (the agent
         // told us which one it wants — DataRequest's, not Validation.swift's),
         // capped; else fall back to the single most-substantive def. This is the
-        // explore-side mirror of WitsOS_node's overload disambiguation.
+        // explore-side mirror of witsos_node's overload disambiguation.
         let picks: Node[];
         if (cands.length <= 3) {
           picks = cands;
@@ -3033,15 +3033,15 @@ export class ToolHandler {
         if (skel.length > 0) {
           const names = [...new Set(group.nodes.filter(n => n.kind !== 'import' && n.kind !== 'export').map(n => n.name))]
             .slice(0, budget.maxSymbolsInFileHeader).join(', ');
-          // Steer the agent to WitsOS_explore for an elided body — NEVER to
+          // Steer the agent to witsos_explore for an elided body — NEVER to
           // Read. The old "Read for more" / "Read for a full body" tags invited
           // a Read of the very file just skeletonized; on a central, wanted file
           // (Session.swift, DataRequest.swift) that fired an over-investigation
           // spiral (the agent Read the skeletonized file, then kept digging).
           // CLAUDE.md: explore output must never tell the agent to Read.
           const tag = bodyIds.size > 0
-            ? 'focused (the methods you named in full, the rest as signatures — WitsOS_explore a signature by name for its body; do NOT Read)'
-            : 'skeleton (signatures only — WitsOS_explore a name for its full body; do NOT Read)';
+            ? 'focused (the methods you named in full, the rest as signatures — witsos_explore a signature by name for its body; do NOT Read)'
+            : 'skeleton (signatures only — witsos_explore a name for its full body; do NOT Read)';
           lines.push(fileSectionHeader(filePath, `${names} · ${tag}`), '', '```' + lang, skel.join('\n'), '```', '');
           totalChars += skel.join('\n').length + 120;
           filesIncluded++;
@@ -3410,10 +3410,10 @@ export class ToolHandler {
     if (budget.includeCompletenessSignal) {
       lines.push('');
       lines.push('---');
-      lines.push(`> **Complete source for ${filesIncluded} files is included above — do NOT re-read them.** If your question also needs files/symbols listed under "Not shown above" (or any area this call didn't cover), make ANOTHER WitsOS_explore targeting those names — it returns the same source with line numbers and is cheaper and more complete than reading. Reserve Read for a single specific line range explore can't surface.`);
+      lines.push(`> **Complete source for ${filesIncluded} files is included above — do NOT re-read them.** If your question also needs files/symbols listed under "Not shown above" (or any area this call didn't cover), make ANOTHER witsos_explore targeting those names — it returns the same source with line numbers and is cheaper and more complete than reading. Reserve Read for a single specific line range explore can't surface.`);
     } else if (anyFileTrimmed) {
       lines.push('');
-      lines.push(`> Some file sections were trimmed for size. For a specific symbol you still need, run another \`WitsOS_explore\` (or \`WitsOS_node\`) with its exact name — line-numbered source, cheaper and more complete than Read.`);
+      lines.push(`> Some file sections were trimmed for size. For a specific symbol you still need, run another \`witsos_explore\` (or \`witsos_node\`) with its exact name — line-numbered source, cheaper and more complete than Read.`);
     }
 
     // Add explore budget note based on project size
@@ -3449,13 +3449,13 @@ export class ToolHandler {
       const lastSection = cut.lastIndexOf('\n' + FILE_SECTION_PREFIX);
       const boundary = lastSection > hardCeiling * 0.5 ? lastSection : cut.lastIndexOf('\n');
       const safe = boundary > 0 ? cut.slice(0, boundary) : cut;
-      return this.textResult(safe + '\n\n... (output truncated to budget; the source above is complete and verbatim — treat it as already Read. For any area not covered, run another WitsOS_explore with the specific names — do NOT Read these files.)');
+      return this.textResult(safe + '\n\n... (output truncated to budget; the source above is complete and verbatim — treat it as already Read. For any area not covered, run another witsos_explore with the specific names — do NOT Read these files.)');
     }
     return this.textResult(output);
   }
 
   /**
-   * Handle WitsOS_node
+   * Handle witsos_node
    */
   private async handleNode(args: Record<string, unknown>): Promise<ToolResult> {
     const cg = this.getWitsOS(args.projectPath as string | undefined);
@@ -3517,7 +3517,7 @@ export class ToolHandler {
     // different types (Alamofire `didCompleteTask`/`task`/`validate`, gin
     // `reset`). Returning ONE forces the agent to guess, and when it guesses
     // wrong it READS the file to find the right overload — the dominant
-    // WitsOS_node read cause on Swift/Go. So return them ALL: pack as many
+    // witsos_node read cause on Swift/Go. So return them ALL: pack as many
     // FULL bodies as fit a char budget (the agent gets the one it needs in this
     // one call, no follow-up parameter to learn), and list any remainder by
     // file:line so a large overload set can't overflow the per-tool cap.
@@ -3567,7 +3567,7 @@ export class ToolHandler {
       if (listed.length > LIST_CAP) out.push(`- … +${listed.length - LIST_CAP} more`);
       out.push(
         '',
-        `> Need one of these in full? Call WitsOS_node again with \`file\` (e.g. \`"${listed[0]!.filePath.split('/').pop()}"\`) or \`line\` — do NOT Read it.`,
+        `> Need one of these in full? Call witsos_node again with \`file\` (e.g. \`"${listed[0]!.filePath.split('/').pop()}"\`) or \`line\` — do NOT Read it.`,
       );
     }
     return this.textResult(this.truncateOutput(out.join('\n')));
@@ -3709,7 +3709,7 @@ export class ToolHandler {
     if (!complete) {
       out.push(
         '',
-        `(lines ${offset}–${shownEnd} of ${total} — pass \`offset\`/\`limit\` for another range, or \`WitsOS_node <symbol>\` for one symbol in full)`,
+        `(lines ${offset}–${shownEnd} of ${total} — pass \`offset\`/\`limit\` for another range, or \`witsos_node <symbol>\` for one symbol in full)`,
       );
     }
     // Self-bounded to CHAR_BUDGET — do NOT route through truncateOutput (15k).
@@ -3737,9 +3737,9 @@ export class ToolHandler {
 
   /**
    * Build the "trail" for a symbol: its direct callees (what it calls) and
-   * callers (what calls it), each with file:line — so WitsOS_node doubles as
+   * callers (what calls it), each with file:line — so witsos_node doubles as
    * the structural Grep→Read→expand primitive: a spot PLUS where to go next.
-   * Capped to stay cheap. Walk the graph by calling WitsOS_node on a trail
+   * Capped to stay cheap. Walk the graph by calling witsos_node on a trail
    * entry; no Read needed for covered hops. Empty edges on a non-leaf often mean
    * dynamic dispatch the static graph couldn't resolve — that absence is itself
    * a signal (read that one hop) rather than a dead end.
@@ -3764,7 +3764,7 @@ export class ToolHandler {
     const callees = collect(cg.getCallees(node.id));
     const callers = collect(cg.getCallers(node.id));
     if (callees.length === 0 && callers.length === 0) return '';
-    const lines: string[] = ['', '**Trail — WitsOS_node any of these to follow it (no Read needed)**'];
+    const lines: string[] = ['', '**Trail — witsos_node any of these to follow it (no Read needed)**'];
     if (callees.length > 0) {
       lines.push(`**Calls →** ${callees.slice(0, TRAIL_CAP).map(fmt).join(', ')}${callees.length > TRAIL_CAP ? `, +${callees.length - TRAIL_CAP} more` : ''}`);
     }
@@ -3775,7 +3775,7 @@ export class ToolHandler {
   }
 
   /**
-   * Handle WitsOS_status
+   * Handle witsos_status
    */
   private async handleStatus(args: Record<string, unknown>): Promise<ToolResult> {
     let cg = this.getWitsOS(args.projectPath as string | undefined);
@@ -3878,7 +3878,7 @@ export class ToolHandler {
   }
 
   /**
-   * Handle WitsOS_files - get project file structure from the index
+   * Handle witsos_files - get project file structure from the index
    */
   private async handleFiles(args: Record<string, unknown>): Promise<ToolResult> {
     const cg = this.getWitsOS(args.projectPath as string | undefined);
@@ -4140,7 +4140,7 @@ export class ToolHandler {
   }
 
   /**
-   * Find ALL definitions matching a name, ranked, so WitsOS_node can return
+   * Find ALL definitions matching a name, ranked, so witsos_node can return
    * every overload instead of guessing one (the wrong guess → a Read). Keepers
    * rank before generated stubs (.pb.go etc.); stable within a group preserves
    * FTS order. Returns [] when nothing matches; a qualified lookup that finds no
@@ -4367,9 +4367,9 @@ export class ToolHandler {
 
     if (outline) {
       lines.push('', outline, '',
-        `> Structural outline only. Read \`${node.filePath}\` or call WitsOS_node on a specific member for its body.`);
+        `> Structural outline only. Read \`${node.filePath}\` or call witsos_node on a specific member for its body.`);
     } else if (code) {
-      // Line-numbered (cat -n style, like WitsOS_explore and Read) so the
+      // Line-numbered (cat -n style, like witsos_explore and Read) so the
       // agent can cite/edit exact lines without re-Reading the file for them.
       const numbered = node.startLine ? numberSourceLines(code, node.startLine) : code;
       lines.push('', '```' + node.language, numbered, '```');

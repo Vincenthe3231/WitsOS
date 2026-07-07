@@ -7,12 +7,12 @@
  * before it sees individual tool descriptions.
  *
  * Goals when editing this:
- *   - Lead the agent to WitsOS_explore for any structural/flow question
+ *   - Lead the agent to witsos_explore for any structural/flow question
  *   - Reinforce "explore instead of Read/Grep" for indexed code
  *   - Anti-patterns (don't re-verify with grep; don't hand-reconstruct flows)
  *
  * Keep it tight. The agent reads this every session — long instructions
- * burn tokens. The DEFAULT MCP surface is `WitsOS_explore` ALONE (see
+ * burn tokens. The DEFAULT MCP surface is `witsos_explore` ALONE (see
  * DEFAULT_MCP_TOOLS in tools.ts) — reference only that tool here. The other
  * tools (node/search/callers/…) stay defined and are re-enablable via
  * WitsOS_MCP_TOOLS, but they are NOT listed to agents, so don't name them.
@@ -29,9 +29,9 @@ verbatim source PLUS who calls it and what it affects, so you edit with the
 blast radius in view. More accurate context, in far fewer tokens and
 round-trips than reading files yourself.
 
-## One tool: WitsOS_explore — use it instead of reading files
+## One tool: witsos_explore — use it instead of reading files
 
-There is a single tool, \`WitsOS_explore\`, and it is Read-equivalent. It
+There is a single tool, \`witsos_explore\`, and it is Read-equivalent. It
 takes either a natural-language question or a bag of symbol/file names and
 returns the **verbatim, line-numbered source** of the relevant symbols
 grouped by file — the same \`<n>\\t<line>\` shape \`Read\` gives you, safe to
@@ -40,7 +40,7 @@ like callbacks, React re-render, and JSX children that grep can't follow) and
 a blast-radius summary of what depends on them.
 
 Whether you're answering "how does X work" or implementing a change (fixing a
-bug, adding a feature), call \`WitsOS_explore\` before you Read. ONE call
+bug, adding a feature), call \`witsos_explore\` before you Read. ONE call
 usually answers the whole question. WitsOS IS the pre-built search index —
 so running your own grep + read loop, or delegating the lookup to a separate
 file-reading sub-task/agent, repeats work WitsOS already did and costs more
@@ -49,16 +49,16 @@ calls; a grep/read exploration is dozens.
 
 ## How to query
 
-- **Almost any question — "how does X work", architecture, a bug, "what/where is X", or surveying an area** → \`WitsOS_explore\` with a natural-language question or the relevant names. ONE capped call returns the verbatim source grouped by file; most often the ONLY call you need.
-- **"How does X reach/become Y? / the flow / the path from X to Y"** → \`WitsOS_explore\`, naming the symbols that span the flow (e.g. \`mutateElement renderScene\`) — it surfaces the call path among them, riding dynamic-dispatch hops, and returns their source.
-- **Reading or editing a file/symbol you can name** → put its name or file path in the \`WitsOS_explore\` query — it returns that current line-numbered source (safe to \`Edit\` from) with the call path and blast radius attached, so you don't Read it separately. For an overloaded name it returns every matching definition's body in one call.
-- **Need more?** Call \`WitsOS_explore\` again with more specific names — treat the source it returns as already Read.
+- **Almost any question — "how does X work", architecture, a bug, "what/where is X", or surveying an area** → \`witsos_explore\` with a natural-language question or the relevant names. ONE capped call returns the verbatim source grouped by file; most often the ONLY call you need.
+- **"How does X reach/become Y? / the flow / the path from X to Y"** → \`witsos_explore\`, naming the symbols that span the flow (e.g. \`mutateElement renderScene\`) — it surfaces the call path among them, riding dynamic-dispatch hops, and returns their source.
+- **Reading or editing a file/symbol you can name** → put its name or file path in the \`witsos_explore\` query — it returns that current line-numbered source (safe to \`Edit\` from) with the call path and blast radius attached, so you don't Read it separately. For an overloaded name it returns every matching definition's body in one call.
+- **Need more?** Call \`witsos_explore\` again with more specific names — treat the source it returns as already Read.
 
 ## Anti-patterns
 
 - **Trust WitsOS's results — don't re-verify them with grep.** They come from a full AST parse; re-checking with grep is slower, less accurate, and wastes context.
-- **Don't grep or Read first** to find or understand indexed code — ONE \`WitsOS_explore\` returns the relevant symbols' source together in a single round-trip. Reach for raw \`Read\`/\`Grep\` only to confirm a specific detail WitsOS didn't cover, or for what WitsOS doesn't index (configs, docs).
-- **Don't reconstruct a flow by hand** — name the endpoints in one \`WitsOS_explore\` and it surfaces the path between them, dynamic-dispatch hops included.
+- **Don't grep or Read first** to find or understand indexed code — ONE \`witsos_explore\` returns the relevant symbols' source together in a single round-trip. Reach for raw \`Read\`/\`Grep\` only to confirm a specific detail WitsOS didn't cover, or for what WitsOS doesn't index (configs, docs).
+- **Don't reconstruct a flow by hand** — name the endpoints in one \`witsos_explore\` and it surfaces the path between them, dynamic-dispatch hops included.
 - **After editing, check the staleness banner.** When a tool response starts with "⚠️ Some files referenced below were edited since the last index sync…", the listed files are pending re-index — Read those specific files for accurate content. Every file NOT in that banner is fresh, so still trust WitsOS. A different, rarer banner — "⚠️ WitsOS auto-sync is DISABLED…" — means live watching stopped entirely (the whole index is frozen, not just a few files); until it's resolved, Read files directly to confirm anything that may have changed.
 
 ## Limitations
@@ -84,7 +84,7 @@ calls; a grep/read exploration is dozens.
 export const SERVER_INSTRUCTIONS_NO_ROOT_INDEX = `# WitsOS — available (per-project; pass projectPath)
 
 WitsOS is a SQLite knowledge graph of a codebase's symbols, edges, and
-files: one \`WitsOS_explore\` call returns the verbatim, line-numbered source
+files: one \`witsos_explore\` call returns the verbatim, line-numbered source
 of the relevant symbols PLUS the call paths between them and a blast-radius
 summary — replacing a grep + Read loop with one round-trip.
 
@@ -93,7 +93,7 @@ default project — but the tools are available and work **per project**:
 
 - To query a project that HAS a \`.WitsOS/\` index (e.g. a service inside a
   monorepo, or a second repo), pass its path as \`projectPath\` to
-  \`WitsOS_explore\` (and any other WitsOS tool). WitsOS resolves the
+  \`witsos_explore\` (and any other WitsOS tool). WitsOS resolves the
   nearest \`.WitsOS/\` at or above that path and answers from it — for as many
   projects as you like in one session.
 - For a project with no \`.WitsOS/\`, use your built-in tools (Read/Grep/Glob)

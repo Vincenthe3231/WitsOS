@@ -85,7 +85,7 @@ await Promise.all(clients.map((c) =>
 if (WARM) {
   process.stderr.write('[repro] warming daemon (first explore triggers spawn+open+catchup)...\n');
   const t0 = performance.now();
-  const r = await clients[0].request('tools/call', { name: 'witsos_explore', arguments: { query: QUERIES[0] } }, 'warm-0', 120000);
+  const r = await clients[0].request('tools/call', { name: 'WitsOS_explore', arguments: { query: QUERIES[0] } }, 'warm-0', 120000);
   process.stderr.write(`[repro] warm explore took ${Math.round(performance.now() - t0)}ms (timeout=${!!r.__timeout})\n`);
   await sleep(500);
 }
@@ -95,7 +95,7 @@ process.stderr.write(`[repro] firing ${N} concurrent explores...\n`);
 const waveStart = performance.now();
 const results = await Promise.all(clients.map((c, i) => {
   const started = performance.now();
-  return c.request('tools/call', { name: 'witsos_explore', arguments: { query: QUERIES[i % QUERIES.length] } }, `call-${c.id}`, TIMEOUT_MS)
+  return c.request('tools/call', { name: 'WitsOS_explore', arguments: { query: QUERIES[i % QUERIES.length] } }, `call-${c.id}`, TIMEOUT_MS)
     .then((m) => ({
       id: c.id,
       ms: Math.round(performance.now() - started),

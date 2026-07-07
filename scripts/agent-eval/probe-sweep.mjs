@@ -75,7 +75,7 @@ for (const s of subjects) {
     const cg = WitsOS.openSync(s.repo);
     const handler = new ToolHandler(cg);
     const t1 = Date.now();
-    const res = await handler.execute('witsos_' + TOOL,
+    const res = await handler.execute('WitsOS_' + TOOL,
       TOOL === 'context' ? { task: s.q } :
       TOOL === 'explore' ? { query: s.q } : { from: 'main', to: 'main' });
     const text = res.content?.[0]?.text ?? '';

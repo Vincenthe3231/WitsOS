@@ -36,12 +36,14 @@ function setHome(dir: string): { restore: () => void } {
     HOME: process.env.HOME,
     USERPROFILE: process.env.USERPROFILE,
     APPDATA: process.env.APPDATA,
+    LOCALAPPDATA: process.env.LOCALAPPDATA,
     XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
     HERMES_HOME: process.env.HERMES_HOME,
   };
   process.env.HOME = dir;
   process.env.USERPROFILE = dir;
   process.env.APPDATA = path.join(dir, '.config');
+  process.env.LOCALAPPDATA = path.join(dir, 'AppData', 'Local');
   process.env.XDG_CONFIG_HOME = path.join(dir, '.config');
   delete process.env.HERMES_HOME;
   return {
@@ -49,6 +51,7 @@ function setHome(dir: string): { restore: () => void } {
       if (prev.HOME === undefined) delete process.env.HOME; else process.env.HOME = prev.HOME;
       if (prev.USERPROFILE === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prev.USERPROFILE;
       if (prev.APPDATA === undefined) delete process.env.APPDATA; else process.env.APPDATA = prev.APPDATA;
+      if (prev.LOCALAPPDATA === undefined) delete process.env.LOCALAPPDATA; else process.env.LOCALAPPDATA = prev.LOCALAPPDATA;
       if (prev.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev.XDG_CONFIG_HOME;
       if (prev.HERMES_HOME === undefined) delete process.env.HERMES_HOME; else process.env.HERMES_HOME = prev.HERMES_HOME;
     },
@@ -681,7 +684,7 @@ describe('Installer targets — partial-state idempotency', () => {
     expect(result.notes?.join(' ')).toMatch(/no project-local config/);
   });
 
-  it('desktop: install writes claude_desktop_config.json (mcpServers.witsos)', () => {
+  it('desktop: install writes claude_desktop_config.json with an absolute node + script command', () => {
     const desktop = getTarget('desktop')!;
     const result = desktop.install('global', { autoAllow: true });
     expect(result.files).toHaveLength(1);
@@ -689,13 +692,77 @@ describe('Installer targets — partial-state idempotency', () => {
     const configPath = desktop.describePaths('global')[0];
     expect(configPath).toContain('claude_desktop_config.json');
     const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    expect(cfg.mcpServers.witsos).toEqual({ type: 'stdio', command: 'witsos', args: ['serve', '--mcp'] });
+    expect(cfg.mcpServers.witsos.type).toBe('stdio');
+    // Desktop is a GUI app with no shell PATH/Volta/nvm, so we embed the
+    // exact node + entry script that ran `install` rather than a bare
+    // `witsos` command Desktop would have to re-resolve on its own PATH.
+    expect(cfg.mcpServers.witsos.command).toBe(process.execPath);
+    expect(path.isAbsolute(cfg.mcpServers.witsos.args[0])).toBe(true);
+    expect(cfg.mcpServers.witsos.args.slice(1)).toEqual(['serve', '--mcp']);
   });
 
-  it.runIf(process.platform === 'win32')('desktop: on Windows resolves under %APPDATA%\\Claude', () => {
+  it('desktop: re-running install in the same process is idempotent (unchanged)', () => {
+    const desktop = getTarget('desktop')!;
+    desktop.install('global', { autoAllow: true });
+    const second = desktop.install('global', { autoAllow: true });
+    expect(second.files[0].action).toBe('unchanged');
+  });
+
+  it.runIf(process.platform === 'win32')('desktop: on Windows falls back to classic %APPDATA%\\Claude when no Store package folder exists', () => {
     const desktop = getTarget('desktop')!;
     const configPath = desktop.describePaths('global')[0];
     expect(configPath).toBe(path.join(process.env.APPDATA!, 'Claude', 'claude_desktop_config.json'));
+  });
+
+  it.runIf(process.platform === 'win32')('desktop: on Windows prefers the Microsoft Store config path when only a Store package folder exists', () => {
+    const storeDir = path.join(process.env.LOCALAPPDATA!, 'Packages', 'Claude_abc123', 'LocalCache', 'Roaming', 'Claude');
+    fs.mkdirSync(storeDir, { recursive: true });
+
+    const desktop = getTarget('desktop')!;
+    const configPath = desktop.describePaths('global')[0];
+    expect(configPath).toBe(path.join(storeDir, 'claude_desktop_config.json'));
+  });
+
+  it.runIf(process.platform === 'win32')('desktop: on Windows prefers the classic path when a classic config already exists alongside an empty Store folder', () => {
+    const classicDir = path.join(process.env.APPDATA!, 'Claude');
+    fs.mkdirSync(classicDir, { recursive: true });
+    fs.writeFileSync(path.join(classicDir, 'claude_desktop_config.json'), '{}\n');
+    const storeDir = path.join(process.env.LOCALAPPDATA!, 'Packages', 'Claude_abc123', 'LocalCache', 'Roaming', 'Claude');
+    fs.mkdirSync(storeDir, { recursive: true });
+
+    const desktop = getTarget('desktop')!;
+    const configPath = desktop.describePaths('global')[0];
+    expect(configPath).toBe(path.join(classicDir, 'claude_desktop_config.json'));
+  });
+
+  it.runIf(process.platform === 'win32')('desktop: on Windows prefers the Store path when a Store config already exists alongside an empty classic dir', () => {
+    const classicDir = path.join(process.env.APPDATA!, 'Claude');
+    fs.mkdirSync(classicDir, { recursive: true });
+    const storeDir = path.join(process.env.LOCALAPPDATA!, 'Packages', 'Claude_abc123', 'LocalCache', 'Roaming', 'Claude');
+    fs.mkdirSync(storeDir, { recursive: true });
+    fs.writeFileSync(path.join(storeDir, 'claude_desktop_config.json'), '{}\n');
+
+    const desktop = getTarget('desktop')!;
+    const configPath = desktop.describePaths('global')[0];
+    expect(configPath).toBe(path.join(storeDir, 'claude_desktop_config.json'));
+  });
+
+  it.runIf(process.platform === 'win32')('desktop: uninstall sweeps a stray witsos entry left at the non-preferred Windows path', () => {
+    const classicDir = path.join(process.env.APPDATA!, 'Claude');
+    const storeDir = path.join(process.env.LOCALAPPDATA!, 'Packages', 'Claude_abc123', 'LocalCache', 'Roaming', 'Claude');
+    fs.mkdirSync(classicDir, { recursive: true });
+    fs.mkdirSync(storeDir, { recursive: true });
+    const entry = { mcpServers: { witsos: { type: 'stdio', command: 'witsos', args: ['serve', '--mcp'] } } };
+    fs.writeFileSync(path.join(classicDir, 'claude_desktop_config.json'), JSON.stringify(entry, null, 2) + '\n');
+    fs.writeFileSync(path.join(storeDir, 'claude_desktop_config.json'), JSON.stringify(entry, null, 2) + '\n');
+
+    const desktop = getTarget('desktop')!;
+    desktop.uninstall('global');
+
+    const classicAfter = JSON.parse(fs.readFileSync(path.join(classicDir, 'claude_desktop_config.json'), 'utf-8'));
+    const storeAfter = JSON.parse(fs.readFileSync(path.join(storeDir, 'claude_desktop_config.json'), 'utf-8'));
+    expect(classicAfter.mcpServers).toBeUndefined();
+    expect(storeAfter.mcpServers).toBeUndefined();
   });
 
   it.runIf(process.platform === 'darwin')('desktop: on macOS resolves under ~/Library/Application Support/Claude', () => {

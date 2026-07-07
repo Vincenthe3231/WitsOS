@@ -282,9 +282,11 @@ describe('Sync Module', () => {
     });
 
     it('should skip files with unsupported extensions', async () => {
-      // A .txt file has no supported grammar, so sync must not index it.
+      // A .bin file has no supported grammar or document ingestion path, so
+      // sync must not index it. (.txt is now ingested as a plaintext
+      // document via chunks_fts — no longer a valid "unsupported" fixture.)
       fs.writeFileSync(
-        path.join(testDir, 'src', 'notes.txt'),
+        path.join(testDir, 'src', 'notes.bin'),
         `just some notes`
       );
 

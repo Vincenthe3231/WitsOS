@@ -70,7 +70,7 @@ for (const repo of Object.keys(GT)) {
       try { rmSync(usageLog); } catch { /* none */ }
       process.env.WITSOS_OFFLOAD_USAGE_LOG = usageLog;
       let answer = '';
-      try { answer = (await h.execute('witsos_explore', { query: GT[repo].question }))?.content?.[0]?.text ?? ''; }
+      try { answer = (await h.execute('WitsOS_explore', { query: GT[repo].question }))?.content?.[0]?.text ?? ''; }
       catch (e) { console.error(`  ${repo}/${effort}#${rep} explore failed: ${e?.message}`); }
       const fired = /Synthesized by WitsOS/.test(answer);
       const ai = { tokens: 0, cost: 0, ms: 0 };

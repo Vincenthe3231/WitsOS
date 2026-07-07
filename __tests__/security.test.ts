@@ -513,9 +513,12 @@ describe('Source file detection (isSourceFile)', () => {
 
   it('rejects unsupported extensions and extensionless files', () => {
     expect(isSourceFile('src/component.css')).toBe(false);
-    expect(isSourceFile('README.md')).toBe(false);
     expect(isSourceFile('Makefile')).toBe(false);
     expect(isSourceFile('.gitignore')).toBe(false);
+  });
+
+  it('accepts markdown as a document source (chunks_fts ingestion)', () => {
+    expect(isSourceFile('README.md')).toBe(true);
   });
 
   it('matches regardless of leading dot directories', () => {

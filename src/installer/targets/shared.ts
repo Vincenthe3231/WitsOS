@@ -202,7 +202,7 @@ export function upsertInstructionsEntry(file: string): { path: string; action: '
     const legacyStart = '<!-- WITSOS_START -->';
     const legacyEnd = '<!-- WITSOS_END -->';
     if (content.includes(legacyStart) && content.includes(legacyEnd)) {
-      const action = removeMarkedSection(file, legacyStart, legacyEnd);
+      removeMarkedSection(file, legacyStart, legacyEnd);
       // Now the file has the legacy block removed, continue with normal upsert
     }
   }

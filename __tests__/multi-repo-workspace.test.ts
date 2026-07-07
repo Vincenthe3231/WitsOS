@@ -194,7 +194,7 @@ describe('multi-repo workspaces (#514) + .gitignore-respect default (#970, #976)
       } finally {
         cg.destroy();
       }
-    });
+    }, 15000); // Windows FS + nested-repo discovery is slower than the 5000ms default
   });
 
   describe('discovery/classifier machinery (exercised under opt-in)', () => {

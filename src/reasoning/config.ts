@@ -1,6 +1,6 @@
 ﻿/**
  * Reasoning-offload configuration: the persistent, machine-level settings the
- * `WitsOS offload` CLI writes, merged with `WitsOS_OFFLOAD_*` env overrides.
+ * `witsos offload` CLI writes, merged with `WITSOS_OFFLOAD_*` env overrides.
  *
  * Stored in `~/.WitsOS/config.json` under the `offload` key — the same global
  * home WitsOS already uses for the daemon registry — because the reasoning
@@ -11,7 +11,7 @@
  * For a BYO endpoint, the API key is NEVER written to disk: the CLI stores the
  * NAME of an env var (`keyEnv`) and reads the key from it at call time. The
  * MANAGED tier ("WitsOS AI") instead authenticates with a revocable, org-scoped
- * token from `WitsOS offload login`, stored separately in `credentials.json`
+ * token from `witsos offload login`, stored separately in `credentials.json`
  * (see ./credentials) — so `config.json` itself never carries a secret either way.
  */
 import * as fs from 'fs';
@@ -56,7 +56,7 @@ export interface ResolvedOffload {
   maxTokens: number;
   strip: boolean;
   debug: boolean;
-  /** Where the endpoint came from — drives `WitsOS offload status`. */
+  /** Where the endpoint came from — drives `witsos offload status`. */
   origin: 'env' | 'config' | 'none';
 }
 
@@ -100,23 +100,23 @@ const trimmed = (v: string | undefined): string | undefined => {
   return t ? t : undefined;
 };
 
-/** Merge the persisted config with `WitsOS_OFFLOAD_*` env overrides (env wins). */
+/** Merge the persisted config with `WITSOS_OFFLOAD_*` env overrides (env wins). */
 export function resolveOffload(env: NodeJS.ProcessEnv = process.env): ResolvedOffload {
   // Hard kill-switch: disable the offload for this process/session without touching
   // the persisted config or the stored login — e.g. one A/B arm, or a user who wants
   // WitsOS_explore to return raw source for a session. Env-only by design.
-  if (env.WitsOS_OFFLOAD_DISABLE === '1') {
+  if (env.WITSOS_OFFLOAD_DISABLE === '1') {
     return {
       enabled: false, managed: false, url: undefined, model: MANAGED_DEFAULT_MODEL,
       apiKey: undefined, keySource: undefined, effort: 'low', style: 'plain',
       timeoutMs: 20000, maxTokens: 12000, strip: false,
-      debug: env.WitsOS_OFFLOAD_DEBUG === '1', origin: 'none',
+      debug: env.WITSOS_OFFLOAD_DEBUG === '1', origin: 'none',
     };
   }
   const c = readOffloadConfig();
   const managed = !!c.managed;
-  const envUrl = trimmed(env.WitsOS_OFFLOAD_URL);
-  const envKey = trimmed(env.WitsOS_OFFLOAD_KEY);
+  const envUrl = trimmed(env.WITSOS_OFFLOAD_URL);
+  const envKey = trimmed(env.WITSOS_OFFLOAD_KEY);
 
   let url: string | undefined;
   let apiKey: string | undefined;
@@ -125,16 +125,16 @@ export function resolveOffload(env: NodeJS.ProcessEnv = process.env): ResolvedOf
 
   if (managed) {
     // Managed tier: default to the WitsOS AI gateway + its public model id; the
-    // bearer is the org token from `WitsOS offload login` (or an env override).
+    // bearer is the org token from `witsos offload login` (or an env override).
     url = envUrl ?? trimmed(c.url) ?? MANAGED_DEFAULT_URL;
-    model = trimmed(env.WitsOS_OFFLOAD_MODEL) ?? trimmed(c.model) ?? MANAGED_DEFAULT_MODEL;
-    if (envKey) { apiKey = envKey; keySource = 'WitsOS_OFFLOAD_KEY'; }
-    else { const t = readOffloadToken(); if (t) { apiKey = t; keySource = 'WitsOS login'; } }
+    model = trimmed(env.WITSOS_OFFLOAD_MODEL) ?? trimmed(c.model) ?? MANAGED_DEFAULT_MODEL;
+    if (envKey) { apiKey = envKey; keySource = 'WITSOS_OFFLOAD_KEY'; }
+    else { const t = readOffloadToken(); if (t) { apiKey = t; keySource = 'witsos login'; } }
   } else {
     // BYO: endpoint + (optional) provider key resolved from env or the named env var.
     url = envUrl ?? trimmed(c.url);
-    model = trimmed(env.WitsOS_OFFLOAD_MODEL) ?? trimmed(c.model) ?? 'gpt-oss-120b';
-    if (envKey) { apiKey = envKey; keySource = 'WitsOS_OFFLOAD_KEY'; }
+    model = trimmed(env.WITSOS_OFFLOAD_MODEL) ?? trimmed(c.model) ?? 'gpt-oss-120b';
+    if (envKey) { apiKey = envKey; keySource = 'WITSOS_OFFLOAD_KEY'; }
     else if (c.keyEnv && trimmed(env[c.keyEnv])) { apiKey = trimmed(env[c.keyEnv]); keySource = c.keyEnv; }
   }
 
@@ -149,12 +149,12 @@ export function resolveOffload(env: NodeJS.ProcessEnv = process.env): ResolvedOf
     model,
     apiKey,
     keySource,
-    effort: trimmed(env.WitsOS_OFFLOAD_EFFORT) ?? trimmed(c.effort) ?? 'low',
-    style: trimmed(env.WitsOS_OFFLOAD_STYLE) ?? trimmed(c.style) ?? 'plain',
-    timeoutMs: Number(env.WitsOS_OFFLOAD_TIMEOUT_MS) || 20000,
-    maxTokens: Number(env.WitsOS_OFFLOAD_MAXTOKENS) || 12000,
-    strip: env.WitsOS_OFFLOAD_STRIP === '1',
-    debug: env.WitsOS_OFFLOAD_DEBUG === '1',
+    effort: trimmed(env.WITSOS_OFFLOAD_EFFORT) ?? trimmed(c.effort) ?? 'low',
+    style: trimmed(env.WITSOS_OFFLOAD_STYLE) ?? trimmed(c.style) ?? 'plain',
+    timeoutMs: Number(env.WITSOS_OFFLOAD_TIMEOUT_MS) || 20000,
+    maxTokens: Number(env.WITSOS_OFFLOAD_MAXTOKENS) || 12000,
+    strip: env.WITSOS_OFFLOAD_STRIP === '1',
+    debug: env.WITSOS_OFFLOAD_DEBUG === '1',
     origin,
   };
 }

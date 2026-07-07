@@ -50,7 +50,7 @@ count() {
       for(const b of (Array.isArray(blocks)?blocks:[])){
         if(b.type!=="tool_use")continue;
         if(b.name==="Read")read++;
-        else if(b.name==="mcp__witsos__witsos_node"){ if(b.input&&b.input.symbol)cgSym++; else cgFile++; }
+        else if(b.name==="mcp__witsos__WitsOS_node"){ if(b.input&&b.input.symbol)cgSym++; else cgFile++; }
         else if(/mcp__witsos__/.test(b.name))cgOther++;
       }
     }catch{}}

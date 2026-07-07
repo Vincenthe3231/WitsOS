@@ -74,7 +74,7 @@ const frontload = lines.some(l => l.includes('auto-retrieved for this question')
 const get = (n) => toolCounts[n] || 0;
 const read = get('Read');
 const grep = get('Grep') + get('Bash') + get('Glob');
-const explore = get('mcp__witsos__witsos_explore');
+const explore = get('mcp__witsos__WitsOS_explore');
 const cgAny = Object.keys(toolCounts).filter(k => /mcp__witsos__/.test(k)).reduce((s, k) => s + toolCounts[k], 0);
 
 const out = {

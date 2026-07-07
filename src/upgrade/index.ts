@@ -8,13 +8,13 @@
  *     canonical installer script (single source of truth) so the download /
  *     version-resolution / PATH logic never drifts between first-install and
  *     upgrade.
- *   - **npm** — installed via `npm i -g @colbymchenry/WitsOS`. Upgrading
+ *   - **npm** — installed via `npm i -g @colbymchenry/witsos`. Upgrading
  *     shells out to npm.
  *   - **npx** — ephemeral; nothing to upgrade (next `npx` fetches latest).
  *   - **source** — a git checkout running its own `dist/`; `git pull` + rebuild.
  *
  * Detection is structural (see `detectInstallMethod`): a bundle carries a
- * vendored `node` binary and a `bin/WitsOS` launcher next to its `lib/`, so
+ * vendored `node` binary and a `bin/witsos` launcher next to its `lib/`, so
  * we can recognize it from the running file's path without a marker file.
  *
  * Windows wrinkle: a running `node.exe` is locked and can't be deleted, so the
@@ -29,8 +29,8 @@ import * as path from 'path';
 import * as https from 'https';
 import { spawnSync } from 'child_process';
 
-export const REPO = 'colbymchenry/WitsOS';
-export const NPM_PACKAGE = '@colbymchenry/WitsOS';
+export const REPO = 'colbymchenry/witsos';
+export const NPM_PACKAGE = '@colbymchenry/witsos';
 const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/main`;
 export const INSTALL_SH_URL = `${RAW_BASE}/install.sh`;
 
@@ -103,7 +103,7 @@ export function detectInstallMethod(input: DetectInput): InstallMethod {
   // A bundle has a vendored node + a launcher script as siblings of lib/.
   const bundleRoot = P.resolve(binDir, '..', '..', '..');
   const vendoredNode = P.join(bundleRoot, isWin ? 'node.exe' : 'node');
-  const launcher = P.join(bundleRoot, 'bin', isWin ? 'WitsOS.cmd' : 'WitsOS');
+  const launcher = P.join(bundleRoot, 'bin', isWin ? 'witsos.cmd' : 'witsos');
   if (exists(vendoredNode) && exists(launcher)) {
     const os = isWin ? 'windows' : 'unix';
     return { kind: 'bundle', os, bundleRoot, installDir: deriveInstallDir(bundleRoot, os, exists) };
@@ -298,9 +298,9 @@ export function reindexAdvisory(): string {
   return [
     c.dim('Your existing project indexes keep working, but were built by the previous version.'),
     c.dim('To pick up this version’s extraction improvements, refresh each project:'),
-    `  ${c.cyan('WitsOS sync')}        ${c.dim('# incremental, fast')}`,
-    `  ${c.cyan('WitsOS index -f')}    ${c.dim('# full rebuild')}`,
-    c.dim('(`WitsOS status` flags any index that predates the engine you’re running.)'),
+    `  ${c.cyan('witsos sync')}        ${c.dim('# incremental, fast')}`,
+    `  ${c.cyan('witsos index -f')}    ${c.dim('# full rebuild')}`,
+    c.dim('(`witsos status` flags any index that predates the engine you’re running.)'),
   ].join('\n');
 }
 
@@ -419,7 +419,7 @@ function upgradeUnixBundle(
   }
 
   const env: NodeJS.ProcessEnv = { ...process.env };
-  if (method.installDir) env.WitsOS_INSTALL_DIR = method.installDir;
+  if (method.installDir) env.WITSOS_INSTALL_DIR = method.installDir;
   if (pinned) env.WitsOS_VERSION = pinned;
 
   deps.log(c.dim(`Running the installer (${downloader} | sh)…`));
@@ -437,7 +437,7 @@ function upgradeUnixBundle(
 /** Build the in-place Windows upgrade script (exported for unit-testing). */
 export function buildWindowsUpgradeScript(bundleRoot: string, version: string, arch: string): string {
   const target = `win32-${arch}`;
-  const url = `https://github.com/${REPO}/releases/download/${version}/WitsOS-${target}.zip`;
+  const url = `https://github.com/${REPO}/releases/download/${version}/witsos-${target}.zip`;
   // Windows can't DELETE a running exe but CAN rename it, so we upgrade IN
   // PLACE: download → rename the locked node.exe aside → extract the new bundle
   // over current\. Synchronous, no detached helper (which dies under SSH/job
@@ -455,7 +455,7 @@ export function buildWindowsUpgradeScript(bundleRoot: string, version: string, a
     `Invoke-WebRequest -Uri $url -OutFile $zip`,
     `$stage=Join-Path $tmp 'stage'`,
     `Expand-Archive -Path $zip -DestinationPath $stage -Force`,
-    `$inner=Join-Path $stage 'WitsOS-${target}'`,
+    `$inner=Join-Path $stage 'witsos-${target}'`,
     `$src=if(Test-Path $inner){$inner}else{$stage}`,
     `$node=Join-Path $dest 'node.exe'`,
     `if(Test-Path $node){Rename-Item -Path $node -NewName ('node.exe.old-'+[guid]::NewGuid().ToString('N')) -Force}`,

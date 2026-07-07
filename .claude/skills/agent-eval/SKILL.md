@@ -56,7 +56,7 @@ scripts/agent-eval/audit.sh <VERSION> <repo-name> <repo-url> "<question>" <MODE>
 **Step 6 — report.** When the job finishes, read the log and report per arm:
 - Headless (`parse-run.mjs`): total tool calls, file `Read`s, Grep/Bash,
   codegraph-tool calls, duration, **total cost**.
-- Interactive (`parse-session.mjs`): the `VERDICT: codegraph_explore used Nx |
+- Interactive (`parse-session.mjs`): the `VERDICT: WitsOS_explore used Nx |
   Read N | Grep/Bash N` and `TOKENS:` lines.
 
 Lead with cost + tool/Read counts — they are the reliable signals; raw token

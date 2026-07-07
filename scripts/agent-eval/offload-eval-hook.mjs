@@ -60,7 +60,7 @@ try {
     try {
       const cg = WitsOS.openSync(found);
       const h = new ToolHandler(cg);
-      const res = await h.execute('witsos_explore', { query: prompt });
+      const res = await h.execute('WitsOS_explore', { query: prompt });
       text = res?.content?.[0]?.text ?? '';
       try { cg.close?.(); } catch { /* ignore */ }
       dbg(`explore attempt ${attempt} returned ${text.length} chars`);

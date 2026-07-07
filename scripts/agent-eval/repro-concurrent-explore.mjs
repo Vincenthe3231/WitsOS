@@ -75,7 +75,7 @@ function runOne(i) {
     timer = setTimeout(() => res({ timedOut: true }), TIMEOUT_MS);
   });
   const work = handler
-    .execute('witsos_explore', { query: q })
+    .execute('WitsOS_explore', { query: q })
     .then((r) => ({ ok: !r.isError, chars: r.content?.[0]?.text?.length ?? 0 }))
     .catch((e) => ({ ok: false, err: String(e?.message ?? e) }));
   return Promise.race([work, timeout]).then((r) => {

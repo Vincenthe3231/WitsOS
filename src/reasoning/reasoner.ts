@@ -1,8 +1,8 @@
 ﻿/**
  * Reasoning offload (opt-in, bring-your-own endpoint).
  *
- * When an offload endpoint is configured — via `WitsOS offload set-endpoint`
- * or the `WitsOS_OFFLOAD_*` env vars — `WitsOS_explore` runs its retrieval
+ * When an offload endpoint is configured — via `witsos offload set-endpoint`
+ * or the `WITSOS_OFFLOAD_*` env vars — `witsos_explore` runs its retrieval
  * LOCALLY as usual, then ships the assembled source context + the user's query to
  * a remote OpenAI-compatible reasoning model. The model reasons over that source
  * and returns a tight, self-contained answer, and THAT answer becomes the result
@@ -58,7 +58,7 @@ export interface OffloadUsage {
 
 /**
  * GET `/v1/usage` from the configured (managed) endpoint → the org's credit
- * balance/usage, or null on any failure. Drives `WitsOS offload status`.
+ * balance/usage, or null on any failure. Drives `witsos offload status`.
  */
 export async function fetchUsage(): Promise<OffloadUsage | null> {
   const cfg = resolveOffload();
@@ -82,21 +82,21 @@ export async function fetchUsage(): Promise<OffloadUsage | null> {
 }
 
 function debug(...args: unknown[]): void {
-  if (process.env.WitsOS_OFFLOAD_DEBUG === '1') {
+  if (process.env.WITSOS_OFFLOAD_DEBUG === '1') {
     // stderr only — stdout is the MCP JSON-RPC transport.
     console.error('[offload]', ...args);
   }
 }
 
 /**
- * Append one JSON line of per-call offload usage to `WitsOS_OFFLOAD_USAGE_LOG`
+ * Append one JSON line of per-call offload usage to `WITSOS_OFFLOAD_USAGE_LOG`
  * when that env var is set (otherwise a no-op). Lets a harness attribute WitsOS AI
  * tokens + cost to a single run without depending on the metered server's cumulative
  * totals. Best-effort: a write failure is logged under debug and never disrupts the
  * tool call (the offload is strictly degradable, and so is its bookkeeping).
  */
 function recordUsage(entry: Record<string, unknown>): void {
-  const logPath = process.env.WitsOS_OFFLOAD_USAGE_LOG;
+  const logPath = process.env.WITSOS_OFFLOAD_USAGE_LOG;
   if (!logPath) return;
   try {
     fs.appendFileSync(logPath, JSON.stringify(entry) + '\n');
@@ -163,7 +163,7 @@ function promptFor(style: string): { system: string; footer: string } {
  * "## Exploration:/Found N symbols" header (the query is sent separately). Left
  * in, some models regurgitate them ("We have 2 explore calls. Let's explore…")
  * and they add noise. Source code, blast radius, relationships, and flow stay.
- * Opt-in (`WitsOS_OFFLOAD_STRIP=1`) — default off (it also removes the "Not
+ * Opt-in (`WITSOS_OFFLOAD_STRIP=1`) — default off (it also removes the "Not
  * shown above" pointers, which can be useful navigation).
  */
 export function stripAgentDirectives(context: string): string {
@@ -204,7 +204,7 @@ export async function synthesizeOffload({ query, context }: SynthArgs): Promise<
   const ctx = cfg.strip ? stripAgentDirectives(context) : context;
   // Optional operator/eval flag forwarded verbatim to the managed Worker (see body below);
   // the Worker validates it and falls back to its default for anything it doesn't recognize.
-  const workerStyle = (process.env.WitsOS_OFFLOAD_STYLE || '').trim();
+  const workerStyle = (process.env.WITSOS_OFFLOAD_STYLE || '').trim();
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);

@@ -30,7 +30,7 @@ if (typeof ToolHandler !== 'function') {
 
 const cg = WitsOS.openSync(repo);
 const h = new ToolHandler(cg);
-const res = await h.execute('witsos_explore', { query });
+const res = await h.execute('WitsOS_explore', { query });
 const text = res.content?.[0]?.text ?? '(no text)';
 console.log(text);
 console.error('\n--- PROBE STATS ---');

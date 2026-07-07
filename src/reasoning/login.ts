@@ -1,5 +1,5 @@
 ﻿/**
- * Managed-login device flow for `WitsOS login`.
+ * Managed-login device flow for `witsos login`.
  *
  * Opens the user's browser to the WitsOS dashboard, where they authorize with
  * their account; the CLI meanwhile polls for the minted, org-scoped token and
@@ -66,11 +66,11 @@ export async function pollForToken(deviceCode: string, intervalSec: number, expi
     } else if (res.status === 429) {
       waitMs += 2000; // server asked us to slow down
     } else if (res.status === 404 || res.status === 410) {
-      throw new Error('the login request expired — run `WitsOS login` again');
+      throw new Error('the login request expired — run `witsos login` again');
     }
     // 202 (authorization pending) → keep waiting
   }
-  throw new Error('login timed out before you approved — run `WitsOS login` again');
+  throw new Error('login timed out before you approved — run `witsos login` again');
 }
 
 /** Best-effort: open a URL in the default browser. Never throws — the URL is also printed. */

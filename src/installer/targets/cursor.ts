@@ -302,9 +302,18 @@ function removeRulesEntry(): WriteResult['files'][number] {
 /**
  * Delete the legacy `WitsOS.mdc` rules file (from pre-casing-fix installs)
  * as a migration cleanup step.
+ *
+ * On a case-insensitive filesystem (Windows, default macOS) this path is
+ * the SAME file as `rulesPath()`'s `witsos.mdc` — `removeRulesEntry()` has
+ * already decided whether to delete it or preserve user content added
+ * outside our markers. Unconditionally unlinking here would blow away
+ * that decision, so skip when the two paths collide case-insensitively.
  */
 function removeLegacyRulesEntry(): WriteResult['files'][number] {
   const file = path.join(process.cwd(), '.cursor', 'rules', 'WitsOS.mdc');
+  if (file.toLowerCase() === rulesPath().toLowerCase()) {
+    return { path: file, action: 'not-found' };
+  }
   if (!fs.existsSync(file)) return { path: file, action: 'not-found' };
   try { fs.unlinkSync(file); } catch { /* ignore */ }
   return { path: file, action: 'removed' };

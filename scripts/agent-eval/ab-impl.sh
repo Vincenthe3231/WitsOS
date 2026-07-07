@@ -41,8 +41,8 @@ analyze(){
     for(const l of L){try{const o=JSON.parse(l);
       if(o.type==="system"&&o.subtype==="init")exposed=(o.tools||[]).filter(t=>/witsos/.test(t)).length;
       for(const b of (o.message?.content||[])){if(b.type!=="tool_use")continue;
-        if(b.name==="mcp__witsos__witsos_explore")ex++;
-        else if(b.name==="mcp__witsos__witsos_node"){if(b.input&&b.input.symbol)ns++;else nf++;}
+        if(b.name==="mcp__witsos__WitsOS_explore")ex++;
+        else if(b.name==="mcp__witsos__WitsOS_node"){if(b.input&&b.input.symbol)ns++;else nf++;}
         else if(/mcp__witsos__/.test(b.name))oc++;
         else if(b.name==="Read")reads.push((b.input?.file_path||"").split("/").pop());
         else if(b.name==="Grep")gr++;
