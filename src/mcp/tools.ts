@@ -711,7 +711,7 @@ export function getStaticTools(): ToolDefinition[] {
  * status) remain fully functional — handlers stay, the library API and CLI are
  * untouched, and `WitsOS_MCP_TOOLS=explore,node,...` re-enables any of them.
  */
-const DEFAULT_MCP_TOOLS = new Set(['explore']);
+const DEFAULT_MCP_TOOLS = new Set(['explore', 'search', 'node', 'callers', 'callees', 'impact', 'status', 'files']);
 
 /**
  * Tool handler that executes tools against a WitsOS instance
@@ -859,7 +859,7 @@ export class ToolHandler {
    */
   getTools(): ToolDefinition[] {
     const allow = this.toolAllowlist();
-    // No explicit allowlist → the default 4-tool surface (see
+    // No explicit allowlist → the default full tool surface (see
     // DEFAULT_MCP_TOOLS for the evidence). An allowlist replaces the
     // default entirely, so any defined tool can be re-enabled.
     let visible = allow
@@ -882,8 +882,8 @@ export class ToolHandler {
       const budget = getExploreBudget(stats.fileCount);
 
       // Tiny-repo tool gating: on projects under TINY_REPO_FILE_THRESHOLD
-      // files, only expose the core trio (search, node, explore) — one
-      // below even the 4-tool default: at this scale callers, too, reduces
+      // files, only expose the core trio (search, node, explore) — a subset
+      // of the full default: at this scale callers, too, reduces
       // to one grep. (Historical note: the audit below ran when context and
       // trace still existed; its "5 core tools" are today's trio.)
       //
