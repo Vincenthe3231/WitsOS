@@ -2230,6 +2230,103 @@ program
   });
 
 /**
+ * WitsOS config [path]
+ *
+ * Interactive `WitsOS.json` editor — replaces hand-editing the JSON for the
+ * two knobs users actually need mid-project: `includeIgnored` (opt a
+ * gitignored nested-repo directory back into indexing, e.g. a pinned
+ * reference clone like SchaleDB/) and `exclude` (drop a git-tracked path
+ * from the index even though it isn't gitignored). OCR/STT already get a
+ * one-time prompt from `witsos index` when eligible files are found
+ * (capability-prompt.ts) — this command lets you flip them back on later
+ * without re-triggering that flow.
+ */
+program
+  .command('config [path]')
+  .description('Interactively edit WitsOS.json (includeIgnored, exclude, OCR, STT)')
+  .action(async (pathArg?: string) => {
+    const projectPath = resolveProjectPath(pathArg);
+    const clack = await importESM('@clack/prompts');
+    const {
+      scaffoldProjectConfig,
+      loadIncludeIgnoredPatterns,
+      loadExcludePatterns,
+      loadOcrConfig,
+      loadSttConfig,
+      writeProjectConfig,
+    } = await import('../project-config');
+    const { discoverIncludeIgnoredCandidates } = await import('../extraction/index');
+
+    scaffoldProjectConfig(projectPath); // no-op if WitsOS.json already exists
+
+    clack.intro('WitsOS.json configuration');
+
+    const currentIncludeIgnored = loadIncludeIgnoredPatterns(projectPath);
+    const candidates = discoverIncludeIgnoredCandidates(projectPath);
+
+    let includeIgnored: string[] = currentIncludeIgnored;
+    if (candidates.length > 0) {
+      const selected = await clack.multiselect({
+        message: 'Gitignored directories that are their own git repo (e.g. a pinned reference clone). Select which to index anyway:',
+        options: candidates.map((dir) => ({
+          value: dir,
+          label: dir,
+          hint: currentIncludeIgnored.includes(dir) ? 'currently included' : undefined,
+        })),
+        initialValues: candidates.filter((dir) => currentIncludeIgnored.includes(dir)),
+        required: false,
+      });
+      if (clack.isCancel(selected)) {
+        clack.cancel('Configuration cancelled.');
+        return;
+      }
+      includeIgnored = selected;
+    } else {
+      clack.log.info('No gitignored nested-repo directories found — nothing to opt in here.');
+    }
+
+    const excludeInput = await clack.text({
+      message: 'Extra paths to exclude from the index, even if git-tracked (gitignore-style, comma-separated):',
+      placeholder: 'e.g. legacy/, vendor/**',
+      initialValue: loadExcludePatterns(projectPath).join(', '),
+    });
+    if (clack.isCancel(excludeInput)) {
+      clack.cancel('Configuration cancelled.');
+      return;
+    }
+    const exclude = String(excludeInput).split(',').map((s) => s.trim()).filter(Boolean);
+
+    const ocr = loadOcrConfig(projectPath);
+    const ocrEnabled = await clack.confirm({
+      message: 'Enable OCR for images (.png/.jpg/…)? Requires @gutenye/ocr-node installed.',
+      initialValue: ocr.enabled,
+    });
+    if (clack.isCancel(ocrEnabled)) {
+      clack.cancel('Configuration cancelled.');
+      return;
+    }
+
+    const stt = loadSttConfig(projectPath);
+    const sttEnabled = await clack.confirm({
+      message: 'Enable speech-to-text for audio files? Requires sherpa-onnx + ffmpeg-static installed.',
+      initialValue: stt.enabled,
+    });
+    if (clack.isCancel(sttEnabled)) {
+      clack.cancel('Configuration cancelled.');
+      return;
+    }
+
+    writeProjectConfig(projectPath, {
+      includeIgnored,
+      exclude,
+      ocr: { ...ocr, enabled: ocrEnabled },
+      stt: { ...stt, enabled: sttEnabled },
+    } as any);
+
+    clack.outro('WitsOS.json updated. Run "witsos index" to apply — "witsos sync" only picks up git-diffed files, not config changes.');
+  });
+
+/**
  * WitsOS telemetry [on|off|status]
  */
 program

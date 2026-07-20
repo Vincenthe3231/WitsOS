@@ -18,6 +18,14 @@ declare module '@clack/prompts' {
     initialValue?: boolean;
   }): Promise<boolean | symbol>;
 
+  export function text(opts: {
+    message: string;
+    placeholder?: string;
+    initialValue?: string;
+    defaultValue?: string;
+    validate?: (value: string) => string | void;
+  }): Promise<string | symbol>;
+
   export function select<Value>(opts: {
     message: string;
     options: { value: Value; label: string; hint?: string }[];

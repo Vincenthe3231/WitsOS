@@ -563,6 +563,29 @@ function findIgnoredEmbeddedRepos(repoDir: string, includeIgnored: Ignore | null
 }
 
 /**
+ * List gitignored directories under `rootDir` that are themselves git repo
+ * roots — i.e. `includeIgnored` candidates, found WITHOUT requiring opt-in
+ * first (unlike `findIgnoredEmbeddedRepos`, which only recurses into dirs
+ * already named in `WitsOS.json`). Powers the `witsos config` wizard so it
+ * can offer real choices instead of asking the user to know the paths.
+ * Returns [] for non-git roots or when git isn't available.
+ */
+export function discoverIncludeIgnoredCandidates(rootDir: string): string[] {
+  try {
+    execFileSync('git', ['rev-parse', '--git-dir'], { cwd: rootDir, encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  } catch {
+    return [];
+  }
+  const defaults = defaultsOnlyIgnore();
+  const out: string[] = [];
+  for (const dir of listIgnoredDirs(rootDir)) {
+    if (defaults.ignores(dir)) continue;
+    out.push(...findNestedGitRepos(path.join(rootDir, dir), dir));
+  }
+  return out;
+}
+
+/**
  * Collect git-visible files (tracked + untracked, .gitignore-respected) from the
  * git repository rooted at `repoDir`, adding each to `files` with `prefix`
  * prepended so paths stay relative to the original scan root.
@@ -1744,8 +1767,29 @@ export class ExtractionOrchestrator {
       };
     }
 
-    // Check file size
-    if (stats.size > MAX_FILE_SIZE) {
+    // Detect language (honoring the project's WitsOS.json extension overrides)
+    const language = detectLanguage(relativePath, content, loadExtensionOverrides(this.rootDir));
+    if (!isLanguageSupported(language)) {
+      return {
+        nodes: [],
+        edges: [],
+        unresolvedReferences: [],
+        errors: [],
+        durationMs: 0,
+      };
+    }
+
+    // Async extractors (PDF, image, audio, video) are handled on the main
+    // thread via runAsyncExtractor before entering the parse worker path.
+    // extractFromSource is sync; these types bypass it via their own async extract() method.
+    const fileExtension = relativePath.substring(relativePath.lastIndexOf('.')).toLowerCase() || '';
+    const mediaExtractor = resolveMediaExtractor(language, fileExtension);
+
+    // Check file size — media extractors (PDF/image/audio/video/markdown/docx/…)
+    // re-read the file themselves and bypass this, same as the bulk indexAll path
+    // (#1364 above). Without this exemption, sync/watch silently dropped any
+    // document/image over 1MB even though a full re-index would have indexed it.
+    if (stats.size > MAX_FILE_SIZE && !mediaExtractor) {
       return {
         nodes: [],
         edges: [],
@@ -1762,28 +1806,10 @@ export class ExtractionOrchestrator {
       };
     }
 
-    // Detect language (honoring the project's WitsOS.json extension overrides)
-    const language = detectLanguage(relativePath, content, loadExtensionOverrides(this.rootDir));
-    if (!isLanguageSupported(language)) {
-      return {
-        nodes: [],
-        edges: [],
-        unresolvedReferences: [],
-        errors: [],
-        durationMs: 0,
-      };
-    }
-
     // Extract from source. Use cached framework names if indexAll has run,
     // otherwise detect on the spot so single-file re-index paths still emit
     // route nodes / middleware / etc.
     const frameworkNames = this.ensureDetectedFrameworks();
-
-    // Async extractors (PDF, image, audio, video) are handled on the main
-    // thread via runAsyncExtractor before entering the parse worker path.
-    // extractFromSource is sync; these types bypass it via their own async extract() method.
-    const fileExtension = relativePath.substring(relativePath.lastIndexOf('.')).toLowerCase() || '';
-    const mediaExtractor = resolveMediaExtractor(language, fileExtension);
     let result: ExtractionResult;
     if (mediaExtractor) {
       result = await this.runAsyncExtractor(relativePath, content, language);
